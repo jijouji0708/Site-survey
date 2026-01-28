@@ -1,0 +1,37 @@
+/* 写真撮影関連 */
+"Take Photo" = "写真を撮る";
+"Cancel" = "キャンセル";
+"Retake" = "撮り直す";
+"Use Photo" = "写真を使用";
+"Done" = "完了";
+"Edit" = "編集";
+"Delete" = "削除";
+"Save" = "保存";
+
+/* 案件関連 */
+"Cases" = "案件一覧";
+"New Case" = "新規案件";
+"Delete Case" = "案件を削除";
+
+/* 写真関連 */
+"Photo" = "写真";
+"Photos" = "写真";
+"Add Photo" = "写真を追加";
+"Markup" = "マークアップ";
+"Rotate" = "回転";
+"Duplicate" = "複製";
+
+/* ツール */
+"Pen" = "ペン";
+"Marker" = "マーカー";
+"Eraser" = "消しゴム";
+"Line" = "直線";
+"Text" = "テキスト";
+"Undo" = "元に戻す";
+"Redo" = "やり直す";
+
+/* その他 */
+"Memo" = "メモ";
+"Overall Memo" = "全体メモ";
+"Reset Zoom" = "ズームリセット";
+"Discard Changes" = "変更を破棄";
