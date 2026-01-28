@@ -10,11 +10,15 @@ import SwiftData
 
 struct CaseListView: View {
     @Environment(\.modelContext) private var modelContext
-    // @Environment(\.editMode) は使用せず、自前でState管理して注入する（安定化のため）
-    @State private var editMode: EditMode = .inactive
     @Query(sort: \Case.updatedAt, order: .reverse) private var cases: [Case]
     
+    // ナビゲーションパス（プログラム制御用）
+    @State private var path = NavigationPath()
+    
+    // 独自の選択モード管理
+    @State private var isSelectionMode = false
     @State private var selection = Set<Case.ID>()
+    
     @State private var caseToDelete: Case?
     @State private var showDeleteAlert = false
     @State private var showBulkDeleteAlert = false
@@ -23,7 +27,7 @@ struct CaseListView: View {
     private let accentGreen = Color(red: 0.2, green: 0.78, blue: 0.35)
     
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if cases.isEmpty {
                     // 仕様: 空状態表示 フォルダアイコン（緑・薄め）+ 「案件がありません」+ 「右上の＋ボタンで追加」
@@ -35,37 +39,32 @@ struct CaseListView: View {
             // 仕様: ナビゲーションタイトル「案件一覧」
             .navigationTitle("案件一覧")
             .toolbar {
-                // 仕様: ツールバー 左上に編集ボタン（「選択」/「キャンセル」）
+                // 仕様: ツールバー 左上に「選択」/「キャンセル」ボタン
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button {
-                        if editMode == .active {
-                            editMode = .inactive
+                        isSelectionMode.toggle()
+                        if !isSelectionMode {
                             selection.removeAll()
-                        } else {
-                            editMode = .active
                         }
                     } label: {
-                        Text(editMode == .active ? "キャンセル" : "選択")
+                        Text(isSelectionMode ? "キャンセル" : "選択")
                     }
                 }
                 
                 // 仕様: ツールバー 右上に plus.circle.fill アイコン（緑）
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    if editMode == .inactive {
+                    if !isSelectionMode {
                         Button(action: addCase) {
                             Image(systemName: "plus.circle.fill")
                                 .foregroundColor(accentGreen)
                                 .font(.title2)
                         }
-                    } else {
-                         // 編集モード中は完了ボタンを表示しない（左上のキャンセルで抜ける）
-                         // あるいは全選択などの機能を入れることも可能だが、今回はシンプルに
                     }
                 }
                 
                 // 仕様: 一括削除ボタン（下部バー）
                 ToolbarItem(placement: .bottomBar) {
-                    if editMode == .active {
+                    if isSelectionMode {
                         HStack {
                             Spacer()
                             Button(role: .destructive) {
@@ -99,10 +98,12 @@ struct CaseListView: View {
             } message: {
                 Text("選択した\(selection.count)件の案件を削除してもよろしいですか？\n含まれる写真もすべて削除されます。")
             }
+            .navigationDestination(for: Case.self) { caseItem in
+                 CaseDetailView(caseItem: caseItem)
+            }
         }
         // 仕様: tint設定 .tint(accentGreen) でナビゲーション全体を緑に
         .tint(accentGreen)
-        .environment(\.editMode, $editMode)
     }
     
     // MARK: - 空状態表示
@@ -129,31 +130,52 @@ struct CaseListView: View {
     //       スワイプアクション 削除（destructive）
     
     private var caseListView: some View {
-        List(selection: $selection) {
+        List {
             ForEach(cases) { caseItem in
-                // NavigationLinkの構造を調整して選択が効くようにする
-                // tagはForEachのIDが自動適用されるはずだが、念のため
-                NavigationLink(value: caseItem) {
+                HStack {
+                    // 選択モード時のチェックボックス
+                    if isSelectionMode {
+                        Image(systemName: selection.contains(caseItem.id) ? "checkmark.circle.fill" : "circle")
+                            .foregroundColor(selection.contains(caseItem.id) ? accentGreen : .gray)
+                            .font(.title2)
+                    }
+                    
                     CaseRowView(caseItem: caseItem)
                 }
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    Button(role: .destructive) {
-                        caseToDelete = caseItem
-                        showDeleteAlert = true
-                    } label: {
-                        Label("削除", systemImage: "trash")
+                .contentShape(Rectangle()) // タップ領域を広げる
+                .onTapGesture {
+                    if isSelectionMode {
+                        toggleSelection(for: caseItem)
+                    } else {
+                        // 選択モードでない場合は詳細へ遷移（プログラム制御）
+                        path.append(caseItem)
                     }
-                    .tint(.red)
+                }
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    if !isSelectionMode {
+                        Button(role: .destructive) {
+                            caseToDelete = caseItem
+                            showDeleteAlert = true
+                        } label: {
+                            Label("削除", systemImage: "trash")
+                        }
+                        .tint(.red)
+                    }
                 }
             }
         }
         .listStyle(.plain)
-        .navigationDestination(for: Case.self) { caseItem in
-             CaseDetailView(caseItem: caseItem)
-        }
     }
     
     // MARK: - アクション
+    
+    private func toggleSelection(for caseItem: Case) {
+        if selection.contains(caseItem.id) {
+            selection.remove(caseItem.id)
+        } else {
+            selection.insert(caseItem.id)
+        }
+    }
     
     private func addCase() {
         let newCase = Case()
@@ -179,7 +201,7 @@ struct CaseListView: View {
             deleteCase(caseItem)
         }
         selection.removeAll()
-        editMode = .inactive
+        isSelectionMode = false
     }
 }
 

@@ -108,3 +108,16 @@ extension UIColor {
         }
     }
 }
+
+// MARK: - Benchmark Colors
+struct MarkupColors {
+    static let white = UIColor(red: 1, green: 1, blue: 1, alpha: 1)
+    static let black = UIColor(red: 0, green: 0, blue: 0, alpha: 1)
+    static let gray = UIColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1)
+    static let red = UIColor(red: 1, green: 0.23, blue: 0.19, alpha: 1)
+    static let blue = UIColor(red: 0, green: 0.48, blue: 1, alpha: 1)
+    static let yellow = UIColor(red: 1, green: 0.8, blue: 0, alpha: 1)
+    static let green = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1)
+    
+    static let all: [UIColor] = [white, black, gray, red, blue, yellow, green]
+}
