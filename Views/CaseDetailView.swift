@@ -275,29 +275,37 @@ struct CaseDetailView: View {
     
     // MARK: - Actions
     
+    // MARK: - Actions
+    
     private var detailsSection: some View {
         DisclosureGroup("詳細", isExpanded: $isDetailsExpanded) {
             VStack(alignment: .leading, spacing: 16) {
-                // 所在地入力
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("所在地")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                // 所在地行
+                HStack(alignment: .center, spacing: 12) {
+                    detailLabel("所在地")
                     
                     TextField("所在地を入力...", text: $caseItem.address)
                         .textFieldStyle(.roundedBorder)
                         .onChange(of: caseItem.address) { _, _ in
                             caseItem.touch()
                         }
+                    
+                    if !caseItem.address.isEmpty {
+                        Button(action: {
+                            caseItem.address = ""
+                            caseItem.touch()
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                    }
                 }
                 
-                // 曜日選択
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("曜日")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                // 曜日行
+                HStack(alignment: .center, spacing: 12) {
+                    detailLabel("曜日")
                     
-                    HStack(spacing: 0) {
+                    HStack(spacing: 2) {
                         // 月(2)〜日(1)の順で表示
                         let weekDays = [2, 3, 4, 5, 6, 7, 1]
                         let labels = ["月", "火", "水", "木", "金", "土", "日"]
@@ -311,107 +319,96 @@ struct CaseDetailView: View {
                                 toggleWeekday(day)
                             }) {
                                 Text(label)
-                                    .font(.subheadline)
+                                    .font(.caption) // 少し小さくして1列に収める
                                     .fontWeight(isSelected ? .bold : .regular)
-                                    .frame(width: 36, height: 36)
+                                    .frame(width: 28, height: 28)
                                     .background(isSelected ? accentGreen : Color(.systemGray5))
                                     .foregroundColor(isSelected ? .white : .primary)
                                     .clipShape(Circle())
                             }
                             .buttonStyle(.plain)
-                            
-                            if index < weekDays.count - 1 {
-                                Spacer()
-                            }
-                        }
-                    }
-                }
-                
-                // 時間選択
-                HStack(alignment: .center, spacing: 20) {
-                    // 開始時間
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("開始")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        if let start = caseItem.workStartTime {
-                            DatePicker("", selection: Binding<Date>(
-                                get: { start },
-                                set: { newDate in
-                                    caseItem.workStartTime = newDate
-                                    caseItem.touch()
-                                }
-                            ), displayedComponents: .hourAndMinute)
-                            .labelsHidden()
-                        } else {
-                            Text("--:--")
-                                .foregroundColor(.secondary)
-                                .frame(height: 34)
-                        }
-                    }
-                    
-                    Image(systemName: "arrow.right")
-                        .foregroundColor(.secondary)
-                        .padding(.top, 16)
-                    
-                    // 終了時間
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("終了")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        if let end = caseItem.workEndTime {
-                            DatePicker("", selection: Binding<Date>(
-                                get: { end },
-                                set: { newDate in
-                                    caseItem.workEndTime = newDate
-                                    caseItem.touch()
-                                }
-                            ), displayedComponents: .hourAndMinute)
-                            .labelsHidden()
-                        } else {
-                            Text("--:--")
-                                .foregroundColor(.secondary)
-                                .frame(height: 34)
                         }
                     }
                     
                     Spacer()
                     
-                    // Unified Undecided Button
-                    let isUndecided = caseItem.workStartTime == nil && caseItem.workEndTime == nil
-                    Button(action: {
-                        if isUndecided {
-                            // Turn OFF Undecided -> Restore default times (9:00 - 17:00)
-                            // Use explicit Calendar generation to ensure non-optional return in generic context (though current.date returns Date?)
-                            // Safely unwrapping or providing current date fallback
-                            let now = Date()
-                            let cal = Calendar.current
-                            var startComps = cal.dateComponents([.year, .month, .day], from: now)
-                            startComps.hour = 9; startComps.minute = 0
-                            
-                            var endComps = cal.dateComponents([.year, .month, .day], from: now)
-                            endComps.hour = 17; endComps.minute = 0
-                            
-                            caseItem.workStartTime = cal.date(from: startComps)
-                            caseItem.workEndTime = cal.date(from: endComps)
-                        } else {
-                            // Turn ON Undecided -> Clear times
+                    if !caseItem.workWeekdays.isEmpty {
+                        Button(action: {
+                            caseItem.workWeekdays.removeAll()
+                            caseItem.touch()
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                
+                // 時間行
+                HStack(alignment: .center, spacing: 12) {
+                    detailLabel("時間")
+                    
+                    // 開始時間
+                    if let start = caseItem.workStartTime {
+                        DatePicker("", selection: Binding<Date>(
+                            get: { start },
+                            set: { newDate in
+                                caseItem.workStartTime = newDate
+                                caseItem.touch()
+                            }
+                        ), displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                    } else {
+                        Text("--:--")
+                            .foregroundColor(.secondary)
+                            .onTapGesture {
+                                // タップでデフォルト値をセット
+                                let now = Date()
+                                let cal = Calendar.current
+                                var comps = cal.dateComponents([.year, .month, .day], from: now)
+                                comps.hour = 9; comps.minute = 0
+                                caseItem.workStartTime = cal.date(from: comps)
+                                caseItem.touch()
+                            }
+                    }
+                    
+                    Text("〜")
+                        .foregroundColor(.secondary)
+                    
+                    // 終了時間
+                    if let end = caseItem.workEndTime {
+                        DatePicker("", selection: Binding<Date>(
+                            get: { end },
+                            set: { newDate in
+                                caseItem.workEndTime = newDate
+                                caseItem.touch()
+                            }
+                        ), displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                    } else {
+                        Text("--:--")
+                            .foregroundColor(.secondary)
+                            .onTapGesture {
+                                let now = Date()
+                                let cal = Calendar.current
+                                var comps = cal.dateComponents([.year, .month, .day], from: now)
+                                comps.hour = 17; comps.minute = 0
+                                caseItem.workEndTime = cal.date(from: comps)
+                                caseItem.touch()
+                            }
+                    }
+                    
+                    Spacer()
+                    
+                    if caseItem.workStartTime != nil || caseItem.workEndTime != nil {
+                        Button(action: {
                             caseItem.workStartTime = nil
                             caseItem.workEndTime = nil
+                            caseItem.touch()
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
                         }
-                        caseItem.touch()
-                    }) {
-                        Text("未定")
-                            .font(.caption.bold())
-                            .padding(.vertical, 6)
-                            .padding(.horizontal, 12)
-                            .background(isUndecided ? accentGreen : Color(.systemGray5))
-                            .foregroundColor(isUndecided ? .white : .primary)
-                            .cornerRadius(8)
                     }
-                    .padding(.top, 16)
                 }
             }
             .padding(.vertical, 8)
@@ -419,6 +416,14 @@ struct CaseDetailView: View {
         .padding(10)
         .background(Color(.systemGray5))
         .cornerRadius(8)
+    }
+    
+    // ラベル共通化 helper
+    private func detailLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.caption.bold())
+            .foregroundColor(accentGreen)
+            .frame(width: 50, alignment: .leading) // 幅を固定して揃える
     }
     
     private func toggleWeekday(_ day: Int) {
