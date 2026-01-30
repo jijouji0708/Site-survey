@@ -10,7 +10,7 @@ import SwiftData
 import PencilKit
 
 struct PhotoDetailView: View {
-    @Bindable var photo: CasePhoto
+    @State private var currentPhoto: CasePhoto
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     
@@ -21,8 +21,26 @@ struct PhotoDetailView: View {
     // 仕様: アクセントカラー Color(red: 0.2, green: 0.78, blue: 0.35)
     private let accentGreen = Color(red: 0.2, green: 0.78, blue: 0.35)
     
+    init(photo: CasePhoto) {
+        _currentPhoto = State(initialValue: photo)
+    }
+    
     var body: some View {
+        // body内でのBinding用（必要に応じて）
+        // noteSectionなどは直接 $currentPhoto を使うため、ここでは必須ではないが、
+        // 既存ロジックとの整合性のため残すことは可能。ただし今回は computed property で管理するため
+        // body直下での @Bindable は削除し、各セクションで適切に参照する形にする。
+        
         VStack(spacing: 0) {
+            // 写真番号表示
+            if let indexStr = photoIndexString {
+                Text(indexStr)
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+                    .padding(.top, 8)
+                    .padding(.bottom, 4)
+            }
+            
             // 仕様: 画像表示 .aspectRatio(contentMode: .fit)、クロップなし
             imageSection
             
@@ -49,7 +67,7 @@ struct PhotoDetailView: View {
             loadImage()
         }
         .onReceive(NotificationCenter.default.publisher(for: ImageStorage.thumbUpdatedNotification)) { notification in
-            if let fileName = notification.object as? String, fileName == photo.imageFileName {
+            if let fileName = notification.object as? String, fileName == currentPhoto.imageFileName {
                 loadImage()
             }
         }
@@ -85,7 +103,56 @@ struct PhotoDetailView: View {
                     ProgressView()
                         .tint(.white)
                 }
+                
+                // ナビゲーションボタン
+                HStack {
+                    if hasPrevious {
+                        Button(action: moveToPrevious) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 30, weight: .bold))
+                                .foregroundColor(.white)
+                                .shadow(color: .black.opacity(0.5), radius: 2, x: 1, y: 1)
+                                .padding()
+                                .background(Color.black.opacity(0.1)) // タップ領域確保
+                                .clipShape(Circle())
+                        }
+                        .padding(.leading, 8)
+                    }
+                    
+                    Spacer()
+                    
+                    if hasNext {
+                        Button(action: moveToNext) {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 30, weight: .bold))
+                                .foregroundColor(.white)
+                                .shadow(color: .black.opacity(0.5), radius: 2, x: 1, y: 1)
+                                .padding()
+                                .background(Color.black.opacity(0.1))
+                                .clipShape(Circle())
+                        }
+                        .padding(.trailing, 8)
+                    }
+                }
             }
+            .gesture(
+                DragGesture()
+                    .onEnded { value in
+                        let horizontalAmount = value.translation.width
+                        let verticalAmount = value.translation.height
+                        
+                        // 主に水平方向の動きであることを確認
+                        if abs(horizontalAmount) > abs(verticalAmount) {
+                            if horizontalAmount < -50 {
+                                // 左スワイプ -> 次へ
+                                moveToNext()
+                            } else if horizontalAmount > 50 {
+                                // 右スワイプ -> 前へ
+                                moveToPrevious()
+                            }
+                        }
+                    }
+            )
         }
     }
     
@@ -108,13 +175,14 @@ struct PhotoDetailView: View {
                 }
             }
             
-            TextField("メモを入力...", text: $photo.note, axis: .vertical)
+            // $currentPhoto.note を直接使用
+            TextField("メモを入力...", text: $currentPhoto.note, axis: .vertical)
                 .lineLimit(3...6)
                 .padding(10)
                 .background(Color(.systemGray5))
                 .cornerRadius(8)
-                .onChange(of: photo.note) { _, _ in
-                    photo.parentCase?.touch()
+                .onChange(of: currentPhoto.note) { _, _ in
+                    currentPhoto.parentCase?.touch()
                     try? modelContext.save()
                 }
         }
@@ -122,7 +190,27 @@ struct PhotoDetailView: View {
     }
     
     private var noteLineCount: Int {
-        photo.note.components(separatedBy: "\n").count
+        currentPhoto.note.components(separatedBy: "\n").count
+    }
+    
+    private var photoIndexString: String? {
+        guard let parent = currentPhoto.parentCase else { return nil }
+        if let index = parent.sortedPhotos.firstIndex(of: currentPhoto) {
+            return "\(index + 1) / \(parent.photos.count)"
+        }
+        return nil
+    }
+    
+    private var hasPrevious: Bool {
+        guard let parent = currentPhoto.parentCase,
+              let index = parent.sortedPhotos.firstIndex(of: currentPhoto) else { return false }
+        return index > 0
+    }
+    
+    private var hasNext: Bool {
+        guard let parent = currentPhoto.parentCase,
+              let index = parent.sortedPhotos.firstIndex(of: currentPhoto) else { return false }
+        return index < parent.sortedPhotos.count - 1
     }
     
     // MARK: - 操作ボタン
@@ -130,7 +218,7 @@ struct PhotoDetailView: View {
     
     private var actionButtons: some View {
         HStack(spacing: 16) {
-            NavigationLink(destination: MarkupLoaderView(photo: photo)) {
+            NavigationLink(destination: MarkupLoaderView(photo: currentPhoto)) {
                 Label("マーク", systemImage: "pencil.tip.crop.circle")
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
@@ -168,11 +256,31 @@ struct PhotoDetailView: View {
     
     // MARK: - アクション
     
+    private func moveToPrevious() {
+        guard let parent = currentPhoto.parentCase,
+              let index = parent.sortedPhotos.firstIndex(of: currentPhoto),
+              index > 0 else { return }
+        
+        let prevPhoto = parent.sortedPhotos[index - 1]
+        currentPhoto = prevPhoto
+        loadImage()
+    }
+    
+    private func moveToNext() {
+        guard let parent = currentPhoto.parentCase,
+              let index = parent.sortedPhotos.firstIndex(of: currentPhoto),
+              index < parent.sortedPhotos.count - 1 else { return }
+        
+        let nextPhoto = parent.sortedPhotos[index + 1]
+        currentPhoto = nextPhoto
+        loadImage()
+    }
+    
     private func loadImage() {
         // データをローカルにコピーしてからTask.detachedで使用
-        let fileName = photo.imageFileName
-        let drawing = photo.drawing
-        let textOverlay = photo.textOverlay
+        let fileName = currentPhoto.imageFileName
+        let drawing = currentPhoto.drawing
+        let textOverlay = currentPhoto.textOverlay
         
         Task {
             let image = ImageStorage.shared.getCompositeImage(
@@ -189,13 +297,13 @@ struct PhotoDetailView: View {
         isRotating = true
         
         Task {
-            let success = await ImageStorage.shared.rotateImage(photo.imageFileName)
+            let success = await ImageStorage.shared.rotateImage(currentPhoto.imageFileName)
             
             if success {
                 // マークアップデータをクリア（回転すると座標がずれるため）
-                photo.markupData = nil
-                photo.textOverlayData = nil
-                photo.parentCase?.touch()
+                currentPhoto.markupData = nil
+                currentPhoto.textOverlayData = nil
+                currentPhoto.parentCase?.touch()
                 
                 try? modelContext.save()
             }
@@ -206,17 +314,17 @@ struct PhotoDetailView: View {
     }
     
     private func deletePhoto() {
-        ImageStorage.shared.deleteImage(photo.imageFileName)
+        ImageStorage.shared.deleteImage(currentPhoto.imageFileName)
         
-        if let caseItem = photo.parentCase {
-            if let index = caseItem.photos.firstIndex(of: photo) {
+        if let caseItem = currentPhoto.parentCase {
+            if let index = caseItem.photos.firstIndex(of: currentPhoto) {
                 caseItem.photos.remove(at: index)
             }
             caseItem.normalizePhotoOrder()
             caseItem.touch()
         }
         
-        modelContext.delete(photo)
+        modelContext.delete(currentPhoto)
         try? modelContext.save()
         
         dismiss()
@@ -243,9 +351,9 @@ struct MarkupLoaderView: View {
                 }
             } else {
                 ProgressView()
-                    .onAppear {
-                        loadImageWithTextOverlay()
-                    }
+                .onAppear {
+                    loadImageWithTextOverlay()
+                }
             }
         }
     }

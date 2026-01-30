@@ -112,40 +112,17 @@ class PDFGenerator {
         
         var currentY = infoY + 30
         let bottomMargin: CGFloat = 80
-        let detailHeight: CGFloat = 100 // 詳細エリアの高さ想定
         
-        // 全体メモ
-        // 詳細情報がある場合はメモエリアを削る
-        // 常に詳細エリアを表示するか、入力がある場合のみにするかは要件次第だが、
-        // 「詳細に入力があった場合」とのことなので、デフォルト値以外かチェックする必要があるが、
-        // 簡易的に常に表示エリアを確保するか、下詰めにする。
-        // ここでは、詳細エリアを下部に固定し、残りをメモにする。
+        // 詳細情報の構築
+        var detailsComponents: [String] = []
         
-        let noteBottomY = pageHeight - bottomMargin - detailHeight - 20
-        let noteHeight = noteBottomY - currentY
-        
-        if !overallNote.isEmpty {
-            currentY += 20
-            let noteBoxRect = CGRect(x: margin, y: currentY, width: pageWidth - margin*2, height: noteHeight)
-            
-            drawSectionBox(context: context, rect: noteBoxRect, title: "全体メモ", content: overallNote, titleColor: accentGreen)
+        // 所在地
+        if !caseItem.address.isEmpty {
+            detailsComponents.append("所在地: \(caseItem.address)")
         }
         
-        // 詳細情報エリア (全体メモの下)
-        let detailY = pageHeight - bottomMargin - detailHeight
-        let detailBoxRect = CGRect(x: margin, y: detailY, width: pageWidth - margin*2, height: detailHeight)
-        
-        // 時間フォーマット
-        let timeFormatter = DateFormatter()
-        timeFormatter.dateFormat = "HH:mm"
-        
-        let startStr = caseItem.workStartTime.map { timeFormatter.string(from: $0) } ?? "未定"
-        let endStr = caseItem.workEndTime.map { timeFormatter.string(from: $0) } ?? "未定"
-        
-        let timeStr = "\(startStr) 〜 \(endStr)"
-        
+        // 作業日時 (入力がある＝空でないor未定でない 場合のみ表示)
         // 曜日
-        // 1(Sun)..7(Sat) -> UIに合わせて月(2)..日(1)の順でチェック＆表示
         let weekdaysOrder = [2, 3, 4, 5, 6, 7, 1]
         let weekdayLabels = ["月", "火", "水", "木", "金", "土", "日"]
         var selectedLabels: [String] = []
@@ -154,11 +131,57 @@ class PDFGenerator {
                 selectedLabels.append(weekdayLabels[i])
             }
         }
-        let weekdayStr = selectedLabels.isEmpty ? "未定" : selectedLabels.joined(separator: ", ")
         
-        let detailContent = "作業可能日: \(weekdayStr)\n作業時間: \(timeStr)"
+        // 時間
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "HH:mm"
         
-        drawSectionBox(context: context, rect: detailBoxRect, title: "詳細情報", content: detailContent, titleColor: accentGreen)
+        let hasTime = caseItem.workStartTime != nil || caseItem.workEndTime != nil
+        let hasWeekdays = !caseItem.workWeekdays.isEmpty
+        
+        if hasWeekdays || hasTime {
+            // どちらか入力があればこのブロックを表示
+            let weekdayStr = selectedLabels.isEmpty ? "未定" : selectedLabels.joined(separator: ", ")
+            
+            let startStr = caseItem.workStartTime.map { timeFormatter.string(from: $0) } ?? "未定"
+            let endStr = caseItem.workEndTime.map { timeFormatter.string(from: $0) } ?? "未定"
+            let timeStr = "\(startStr) 〜 \(endStr)"
+            
+            detailsComponents.append("作業可能日: \(weekdayStr)")
+            detailsComponents.append("作業時間: \(timeStr)")
+        }
+        
+        let detailContent = detailsComponents.joined(separator: "\n")
+        let showDetails = !detailsComponents.isEmpty
+        
+        // 詳細エリアの高さ（表示時のみ確保）
+        // 内容に応じて高さを微調整してもよいが、一旦固定または行数ベースで確保
+        let detailHeight: CGFloat = showDetails ? (CGFloat(detailsComponents.count) * 20 + 50) : 0
+        
+        // 全体メモエリアの計算
+        // 詳細がある場合はその分上に底上げ
+        let detailY = pageHeight - bottomMargin - detailHeight
+        
+        // メモの下端目安: 詳細エリアの上 - 20 (詳細がない場合は margin - 0 - 20 なので bottomMarginのみ)
+        // Adjust spacing: if details hidden, margin is from bottom
+        let noteBottomY = showDetails ? (detailY - 20) : (pageHeight - bottomMargin)
+        let noteHeight = noteBottomY - currentY
+        
+        if !overallNote.isEmpty {
+            currentY += 20
+            // noteHeightが小さすぎないかチェック
+            if noteHeight > 40 {
+                let noteBoxRect = CGRect(x: margin, y: currentY, width: pageWidth - margin*2, height: noteHeight)
+                drawSectionBox(context: context, rect: noteBoxRect, title: "全体メモ", content: overallNote, titleColor: accentGreen)
+            }
+        }
+        
+        // 詳細情報エリア描画
+        if showDetails {
+            // detailYは計算済み
+            let detailBoxRect = CGRect(x: margin, y: detailY, width: pageWidth - margin*2, height: detailHeight)
+            drawSectionBox(context: context, rect: detailBoxRect, title: "詳細情報", content: detailContent, titleColor: accentGreen)
+        }
         
         // フッターライン
         context.saveGState()

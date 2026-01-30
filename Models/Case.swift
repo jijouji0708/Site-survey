@@ -13,6 +13,7 @@ final class Case {
     var id: UUID = UUID()
     var title: String = ""
     var overallNote: String = ""
+    var address: String = ""
     
     // 詳細情報
     // 曜日: 1=Sun, ..., 7=Sat (Calendar.current.component(.weekday, ...)準拠)

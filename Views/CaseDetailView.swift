@@ -40,7 +40,7 @@ struct CaseDetailView: View {
     
     // 仕様: LazyVGrid、adaptive(minimum: 100, maximum: 140)、spacing: 10
     private let columns = [
-        GridItem(.adaptive(minimum: 100, maximum: 140), spacing: 10)
+        GridItem(.adaptive(minimum: 85), spacing: 10)
     ]
     
     var body: some View {
@@ -233,12 +233,25 @@ struct CaseDetailView: View {
     // 仕様: 並替モード ドラッグ&ドロップ
     
     private var photoGridSection: some View {
-        LazyVGrid(columns: columns, spacing: 10) {
+        let screenWidth = UIScreen.main.bounds.width
+        // パディング(16*2)を考慮した有効幅
+        let availableWidth = screenWidth - 32
+        // セル間のスペース
+        let spacing: CGFloat = 10
+        // 目標とするアイテム幅（これを目安に列数を決定）
+        let targetItemWidth: CGFloat = 100 
+        
+        // (有効幅 + スペース) / (アイテム幅 + スペース) で列数を概算
+        let columnsCount = max(3, Int((availableWidth + spacing) / (targetItemWidth + spacing)))
+        
+        let columns = Array(repeating: GridItem(.flexible(), spacing: spacing), count: columnsCount)
+        
+        return LazyVGrid(columns: columns, spacing: 10) {
             ForEach(caseItem.sortedPhotos) { photo in
                 PhotoThumbView(
                     photo: photo,
                     index: (caseItem.sortedPhotos.firstIndex(of: photo) ?? 0) + 1,
-                    isReordering: false, // 常時操作可能（ドラッグ優先だがボタンも表示する方針）
+                    isReordering: false,
                     updateTrigger: thumbUpdateTrigger,
                     onDuplicate: { duplicatePhoto(photo) },
                     onDelete: {
@@ -265,6 +278,19 @@ struct CaseDetailView: View {
     private var detailsSection: some View {
         DisclosureGroup("詳細", isExpanded: $isDetailsExpanded) {
             VStack(alignment: .leading, spacing: 16) {
+                // 所在地入力
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("所在地")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    TextField("所在地を入力...", text: $caseItem.address)
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: caseItem.address) { _, _ in
+                            caseItem.touch()
+                        }
+                }
+                
                 // 曜日選択
                 VStack(alignment: .leading, spacing: 8) {
                     Text("曜日")
