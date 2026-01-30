@@ -14,7 +14,17 @@ class MarkupToolbar: UIView {
     private var colorButtons: [UIButton] = []
     
     // Mapping button to color for equality check
+    // Liquid Glass Indicators
+    private let selectionIndicator = UIView()
+    private weak var toolStackRef: UIStackView?
+    
+    private let colorSelectionIndicator = UIView()
+    private weak var colorStackRef: UIStackView?
+    
+    // Mapping button to color for equality check
     private var buttonColors: [UIButton: UIColor] = [:]
+    private var orderedTools: [MarkupTool] = []
+    private var orderedColors: [UIColor] = []
     
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -48,6 +58,17 @@ class MarkupToolbar: UIView {
         toolStack.spacing = 15
         toolStack.distribution = .fillEqually
         mainStack.addArrangedSubview(toolStack)
+        self.toolStackRef = toolStack
+        
+        // Setup Tool Indicator
+        selectionIndicator.backgroundColor = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0) // Accent Green
+        selectionIndicator.layer.cornerRadius = 8
+        toolStack.addSubview(selectionIndicator)
+        toolStack.sendSubviewToBack(selectionIndicator)
+        
+        // Add Pan Gesture for Tool Swipe Selection
+        let toolPan = UIPanGestureRecognizer(target: self, action: #selector(handleToolPan(_:)))
+        toolStack.addGestureRecognizer(toolPan)
         
         let tools: [(MarkupTool, String)] = [
             (.pen, "pencil"),
@@ -60,6 +81,7 @@ class MarkupToolbar: UIView {
         ]
         
         for (tool, icon) in tools {
+            orderedTools.append(tool)
             let btn = UIButton()
             btn.setImage(UIImage(systemName: icon), for: .normal)
             btn.tintColor = .white
@@ -86,6 +108,7 @@ class MarkupToolbar: UIView {
         colorStack.alignment = .center
         colorStack.translatesAutoresizingMaskIntoConstraints = false
         colorContainer.addSubview(colorStack)
+        self.colorStackRef = colorStack
         
         NSLayoutConstraint.activate([
             colorStack.topAnchor.constraint(equalTo: colorContainer.topAnchor),
@@ -95,20 +118,30 @@ class MarkupToolbar: UIView {
             colorStack.heightAnchor.constraint(equalTo: colorContainer.heightAnchor)
         ])
         
+        // Setup Color Indicator
+        colorSelectionIndicator.backgroundColor = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0) // Accent Green
+        colorSelectionIndicator.layer.cornerRadius = 16 // Slightly larger than button radius (12) + padding
+        colorStack.addSubview(colorSelectionIndicator)
+        colorStack.sendSubviewToBack(colorSelectionIndicator)
+        
+        // Add Pan Gesture for Color Swipe Selection
+        let colorPan = UIPanGestureRecognizer(target: self, action: #selector(handleColorPan(_:)))
+        colorStack.addGestureRecognizer(colorPan)
+        
         for color in MarkupColors.all {
+            orderedColors.append(color)
             let btn = UIButton()
             btn.translatesAutoresizingMaskIntoConstraints = false
             btn.widthAnchor.constraint(equalToConstant: 24).isActive = true
             btn.heightAnchor.constraint(equalToConstant: 24).isActive = true
             btn.backgroundColor = color
             btn.layer.cornerRadius = 12
-            btn.layer.borderWidth = 2
-            btn.layer.borderColor = UIColor.clear.cgColor
+            btn.layer.borderWidth = 1
+            btn.layer.borderColor = UIColor.white.withAlphaComponent(0.3).cgColor
             
             // For white/black visibility
             if color == MarkupColors.black {
                 btn.layer.borderColor = UIColor.darkGray.cgColor
-                btn.layer.borderWidth = 1
             }
             
             btn.addAction(UIAction { [weak self] _ in self?.selectColor(color) }, for: .touchUpInside)
@@ -117,45 +150,163 @@ class MarkupToolbar: UIView {
             buttonColors[btn] = color
         }
         
-        updateUI()
+        // Initial UI update needs lay out first ideally, but we call it to set colors
+        updateUI(animated: false)
+    }
+    
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Update indicator position on layout change without animation
+        updateSelectionIndicatorPosition(animated: false)
+        updateColorSelectionIndicatorPosition(animated: false)
+    }
+    
+    @objc private func handleToolPan(_ gesture: UIPanGestureRecognizer) {
+        guard let toolStack = gesture.view else { return }
+        let location = gesture.location(in: toolStack)
+        let width = toolStack.bounds.width
+        let count = CGFloat(orderedTools.count)
+        
+        guard width > 0, count > 0 else { return }
+        
+        // Calculate index
+        let segmentWidth = width / count
+        let index = Int(floor(location.x / segmentWidth))
+        
+        // Clamp index
+        let clampedIndex = max(0, min(orderedTools.count - 1, index))
+        let tool = orderedTools[clampedIndex]
+        
+        if tool != selectedTool {
+            selectTool(tool)
+            // Optional: Light haptic feedback
+            let generator = UISelectionFeedbackGenerator()
+            generator.selectionChanged()
+        }
+    }
+    
+    @objc private func handleColorPan(_ gesture: UIPanGestureRecognizer) {
+        guard let colorStack = gesture.view else { return }
+        let location = gesture.location(in: colorStack)
+        
+        // Note: For colors in a scrollable view or spaced stack, "segmentWidth" isn't uniform if we consider spacing.
+        // However, colorStack is an internal UIStackView inside the ScrollView, so its width grows.
+        // We can just find which button frame contains the touch x.
+        
+        // Find button closest to touch X
+        // Optimization: Assume roughly equal width distribution or iterate buttons
+        
+        // Simple hit test logic for scrubbing:
+        // Identify which button's horizontal range [minX, maxX] covers location.x
+        
+        if let btn = colorButtons.first(where: { btn in
+            // Hit test with some margin
+            let f = btn.frame
+            return location.x >= f.minX - 6 && location.x <= f.maxX + 6
+        }), let color = buttonColors[btn] {
+            if color != selectedColor {
+                selectColor(color)
+                let generator = UISelectionFeedbackGenerator()
+                generator.selectionChanged()
+            }
+        }
     }
     
     func selectTool(_ tool: MarkupTool) {
         selectedTool = tool
         delegate?.didSelectTool(tool)
-        updateUI()
+        updateUI(animated: true)
     }
     
     func selectColor(_ color: UIColor) {
         selectedColor = color
         delegate?.didSelectColor(color)
-        updateUI()
+        updateUI(animated: true)
     }
     
-    func updateUI() {
+    private func updateUI(animated: Bool = true) {
+        // Update Buttons Color
         for (t, b) in toolButtons {
-            b.tintColor = (t == selectedTool) ? .green : .white
+            // Unselected are semi-transparent white, Selected is opaque white
+            b.tintColor = (t == selectedTool) ? .white : UIColor.white.withAlphaComponent(0.5)
+            // Scale effect on icon? Maybe slight
+            b.transform = (t == selectedTool) ? CGAffineTransform(scaleX: 1.1, y: 1.1) : .identity
         }
         
+        updateSelectionIndicatorPosition(animated: animated)
+        updateColorSelectionIndicatorPosition(animated: animated)
+        
+        // Color buttons update
         for btn in colorButtons {
             guard let color = buttonColors[btn] else { continue }
             let isSelected = color == selectedColor
             
+            // Selected color button style:
+            // Since we have a green indicator behind, maybe we don't need a border ring anymore?
+            // Or maybe keep it simple. User said "same way".
+            // Let's keep the button itself clean.
+            
             if isSelected {
                 btn.transform = CGAffineTransform(scaleX: 1.2, y: 1.2)
-                btn.layer.borderColor = UIColor.white.cgColor // Selection ring
+                btn.layer.borderColor = UIColor.white.cgColor
                 btn.layer.borderWidth = 2
             } else {
                 btn.transform = .identity
-                // Reset border
+                btn.layer.borderWidth = 1
+                btn.layer.borderColor = UIColor.white.withAlphaComponent(0.3).cgColor
+                
                 if color == MarkupColors.black {
                     btn.layer.borderColor = UIColor.darkGray.cgColor
-                    btn.layer.borderWidth = 1
-                } else {
-                    btn.layer.borderColor = UIColor.clear.cgColor
-                    btn.layer.borderWidth = 0
                 }
             }
+        }
+    }
+    
+    private func updateSelectionIndicatorPosition(animated: Bool) {
+        guard let btn = toolButtons[selectedTool], let toolStack = toolStackRef else { return }
+        
+        let targetFrame = btn.frame.insetBy(dx: -4, dy: -4)
+        if targetFrame.width == 0 || targetFrame.height == 0 { return }
+        
+        let updates = {
+            self.selectionIndicator.frame = targetFrame
+            self.selectionIndicator.layer.cornerRadius = min(targetFrame.width, targetFrame.height) / 2
+        }
+        
+        if animated {
+            UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0.5, options: [.beginFromCurrentState, .allowUserInteraction], animations: updates)
+        } else {
+            updates()
+        }
+    }
+    
+    private func updateColorSelectionIndicatorPosition(animated: Bool) {
+        // Find button for selected color
+        guard let btn = colorButtons.first(where: { buttonColors[$0] == selectedColor }), let _ = colorStackRef else { return }
+        
+        // Indicator frame: slightly larger than button
+        // Button is 24x24. Let's make indicator 32x32?
+        
+        let buttonFrame = btn.frame
+        if buttonFrame.width == 0 { return }
+        
+        let size: CGFloat = 34
+        let targetFrame = CGRect(
+            x: buttonFrame.midX - size/2,
+            y: buttonFrame.midY - size/2,
+            width: size,
+            height: size
+        )
+        
+        let updates = {
+            self.colorSelectionIndicator.frame = targetFrame
+            self.colorSelectionIndicator.layer.cornerRadius = size / 2
+        }
+        
+        if animated {
+             UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0.5, options: [.beginFromCurrentState, .allowUserInteraction], animations: updates)
+        } else {
+            updates()
         }
     }
 }
