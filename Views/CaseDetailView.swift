@@ -13,6 +13,11 @@ import UniformTypeIdentifiers
 import VisionKit
 import PencilKit
 
+enum PhotoViewMode {
+    case grid
+    case list
+}
+
 struct CaseDetailView: View {
     @Bindable var caseItem: Case
     @Environment(\.modelContext) private var modelContext
@@ -33,6 +38,8 @@ struct CaseDetailView: View {
     @State private var isDetailsExpanded = false // 詳細セクションの開閉状態
     
     @State private var draggingPhoto: CasePhoto? // ドラッグ中の写真を追跡
+    @State private var photoViewMode: PhotoViewMode = .grid // 写真表示モード
+    @State private var showMemoLineAlert = false // メモ行数超過アラート
     
     // アクセントカラー（緑）- 仕様: Color(red: 0.2, green: 0.78, blue: 0.35)
     private let accentGreen = Color(red: 0.2, green: 0.78, blue: 0.35)
@@ -179,6 +186,16 @@ struct CaseDetailView: View {
                 .font(.headline)
             
             Spacer()
+            
+            // 表示モード切り替えボタン
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    photoViewMode = (photoViewMode == .grid) ? .list : .grid
+                }
+            }) {
+                Image(systemName: photoViewMode == .grid ? "list.bullet" : "square.grid.2x2")
+                    .foregroundColor(accentGreen)
+            }
         }
     }
     
@@ -232,7 +249,17 @@ struct CaseDetailView: View {
     // MARK: - 写真グリッドセクション
     // 仕様: 並替モード ドラッグ&ドロップ
     
+    @ViewBuilder
     private var photoGridSection: some View {
+        if photoViewMode == .grid {
+            gridPhotoView
+        } else {
+            listPhotoView
+        }
+    }
+    
+    // グリッド表示
+    private var gridPhotoView: some View {
         let screenWidth = UIScreen.main.bounds.width
         // パディング(16*2)を考慮した有効幅
         let availableWidth = screenWidth - 32
@@ -270,6 +297,61 @@ struct CaseDetailView: View {
                     modelContext: modelContext
                 ))
             }
+        }
+    }
+    
+    // リスト表示（写真 + メモ入力欄）
+    private var listPhotoView: some View {
+        // 6行分の高さを計算（caption font ≈ 12pt、行間含めて約16pt/行）
+        let sixLineHeight: CGFloat = 100 // 6行 × 約16pt + パディング
+        
+        return LazyVStack(spacing: 12) {
+            ForEach(Array(caseItem.sortedPhotos.enumerated()), id: \.element.id) { index, photo in
+                HStack(alignment: .top, spacing: 12) {
+                    // 写真サムネイル（PhotoThumbViewを使用、固定サイズ）
+                    PhotoThumbView(
+                        photo: photo,
+                        index: index + 1,
+                        isReordering: false,
+                        updateTrigger: thumbUpdateTrigger,
+                        onDuplicate: { duplicatePhoto(photo) },
+                        onDelete: {
+                            photoToDelete = photo
+                            showDeleteAlert = true
+                        }
+                    )
+                    .frame(width: 100, height: sixLineHeight)
+                    
+                    // メモ入力欄（6行固定高さ、6行制限）
+                    TextField("メモを入力...", text: Binding(
+                        get: { photo.note },
+                        set: { newValue in
+                            // 行数チェック
+                            let lineCount = newValue.components(separatedBy: "\n").count
+                            if lineCount > 6 {
+                                // 6行を超えたら警告を表示し、入力を制限
+                                showMemoLineAlert = true
+                                // 6行目までのみ保持
+                                let lines = newValue.components(separatedBy: "\n")
+                                photo.note = lines.prefix(6).joined(separator: "\n")
+                            } else {
+                                photo.note = newValue
+                            }
+                            caseItem.touch()
+                        }
+                    ), axis: .vertical)
+                    .lineLimit(6) // 6行固定
+                    .textFieldStyle(.roundedBorder)
+                    .font(.caption)
+                    .frame(height: sixLineHeight, alignment: .topLeading) // 6行分の高さ
+                }
+                .padding(.vertical, 4)
+            }
+        }
+        .alert("メモは6行までです", isPresented: $showMemoLineAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("PDFに表示できるメモは6行までです。それ以降の行は表示されません。")
         }
     }
     
