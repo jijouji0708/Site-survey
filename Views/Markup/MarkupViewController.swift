@@ -127,16 +127,18 @@ class ArrowAnnotationView: BaseAnnotationView {
     var endPoint: CGPoint { didSet { setNeedsLayout() } }
     var color: UIColor { didSet { shapeLayer.strokeColor = color.cgColor } }
     var lineWidth: CGFloat { didSet { shapeLayer.lineWidth = lineWidth } }
+    var style: ArrowStyle { didSet { setNeedsLayout() } }
     
     private let shapeLayer = CAShapeLayer()
     private let startHandle = UIView()
     private let endHandle = UIView()
     
-    init(id: UUID = UUID(), start: CGPoint, end: CGPoint, color: UIColor, lineWidth: CGFloat) {
+    init(id: UUID = UUID(), start: CGPoint, end: CGPoint, color: UIColor, lineWidth: CGFloat, style: ArrowStyle = .oneWay) {
         self.startPoint = start
         self.endPoint = end
         self.color = color
         self.lineWidth = lineWidth
+        self.style = style
         super.init(id: id, frame: .zero)
         
         // Frame will be calculated by layout
@@ -194,14 +196,27 @@ class ArrowAnnotationView: BaseAnnotationView {
         
         // Arrow Head
         let arrowLen: CGFloat = 20
-        let angle = atan2(localEnd.y - localStart.y, localEnd.x - localStart.x)
         let arrowAngle: CGFloat = .pi / 6
         
-        let p1 = CGPoint(x: localEnd.x - arrowLen * cos(angle - arrowAngle), y: localEnd.y - arrowLen * sin(angle - arrowAngle))
-        let p2 = CGPoint(x: localEnd.x - arrowLen * cos(angle + arrowAngle), y: localEnd.y - arrowLen * sin(angle + arrowAngle))
+        // End Arrow (for .oneWay and .twoWay)
+        if style == .oneWay || style == .twoWay {
+            let angle = atan2(localEnd.y - localStart.y, localEnd.x - localStart.x)
+            let p1 = CGPoint(x: localEnd.x - arrowLen * cos(angle - arrowAngle), y: localEnd.y - arrowLen * sin(angle - arrowAngle))
+            let p2 = CGPoint(x: localEnd.x - arrowLen * cos(angle + arrowAngle), y: localEnd.y - arrowLen * sin(angle + arrowAngle))
+            
+            path.move(to: localEnd); path.addLine(to: p1)
+            path.move(to: localEnd); path.addLine(to: p2)
+        }
         
-        path.move(to: localEnd); path.addLine(to: p1)
-        path.move(to: localEnd); path.addLine(to: p2)
+        // Start Arrow (for .twoWay only)
+        if style == .twoWay {
+            let angle = atan2(localStart.y - localEnd.y, localStart.x - localEnd.x)
+            let p1 = CGPoint(x: localStart.x - arrowLen * cos(angle - arrowAngle), y: localStart.y - arrowLen * sin(angle - arrowAngle))
+            let p2 = CGPoint(x: localStart.x - arrowLen * cos(angle + arrowAngle), y: localStart.y - arrowLen * sin(angle + arrowAngle))
+            
+            path.move(to: localStart); path.addLine(to: p1)
+            path.move(to: localStart); path.addLine(to: p2)
+        }
         
         shapeLayer.path = path.cgPath
         
@@ -431,6 +446,8 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     private let toolPicker = PKToolPicker()
     private var currentTool: MarkupTool = .pen
     private var currentColor: UIColor = .red
+    private var currentFontSize: CGFloat = 16 // Default Small
+    private var currentArrowStyle: ArrowStyle = .oneWay
     
     private var lastLayoutRect: CGRect = .zero
     private var isDataLoaded = false
@@ -463,16 +480,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         if scrollView.zoomScale == 1.0 {
             updateContentFrame()
             
-            // Toolbar Layout (Bottom Center)
-            let toolbarWidth: CGFloat = 300
-            let toolbarHeight: CGFloat = 110 // Updated for color picker
-            let bottomPadding: CGFloat = view.safeAreaInsets.bottom + 20
-            toolbar.frame = CGRect(
-                x: (view.bounds.width - toolbarWidth) / 2,
-                y: view.bounds.height - toolbarHeight - bottomPadding,
-                width: toolbarWidth,
-                height: toolbarHeight
-            )
+            // Toolbar Layout handled by Auto Layout in setupViews()
             view.bringSubviewToFront(toolbar)
             
             let rect = AVMakeRect(aspectRatio: image?.size ?? .zero, insideRect: imageView.bounds)
@@ -501,7 +509,17 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         contentView.addSubview(imageView)
         contentView.addSubview(canvasView)
         contentView.addSubview(overlayView)
+        
+        // Toolbar with Auto Layout
+        toolbar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(toolbar)
+        
+        NSLayoutConstraint.activate([
+            toolbar.widthAnchor.constraint(equalToConstant: 300),
+            toolbar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            toolbar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20)
+            // Height is determined by intrinsic content size
+        ])
         
         toolbar.delegate = self
         
@@ -613,7 +631,8 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
                     startX: normStart.x, startY: normStart.y,
                     endX: normEnd.x, endY: normEnd.y,
                     colorHex: av.color.toHex(),
-                    lineWidth: av.lineWidth
+                    lineWidth: av.lineWidth,
+                    style: av.style
                 ))
             } else if let sv = view as? ShapeAnnotationView {
                 let normX = (sv.frame.origin.x - rect.minX) / rect.width
@@ -667,19 +686,36 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
                 
                 let arrowLen: CGFloat = 20.0 / scale
                 let arrowAngle: CGFloat = .pi / 6
-                let angle = atan2(end.y - start.y, end.x - start.x)
                 
-                let p1 = CGPoint(
-                    x: end.x - arrowLen * cos(angle - arrowAngle),
-                    y: end.y - arrowLen * sin(angle - arrowAngle)
-                )
-                let p2 = CGPoint(
-                    x: end.x - arrowLen * cos(angle + arrowAngle),
-                    y: end.y - arrowLen * sin(angle + arrowAngle)
-                )
+                // End Arrow
+                if a.style == .oneWay || a.style == .twoWay {
+                    let angle = atan2(end.y - start.y, end.x - start.x)
+                    let p1 = CGPoint(
+                        x: end.x - arrowLen * cos(angle - arrowAngle),
+                        y: end.y - arrowLen * sin(angle - arrowAngle)
+                    )
+                    let p2 = CGPoint(
+                        x: end.x - arrowLen * cos(angle + arrowAngle),
+                        y: end.y - arrowLen * sin(angle + arrowAngle)
+                    )
+                    path.move(to: end); path.addLine(to: p1)
+                    path.move(to: end); path.addLine(to: p2)
+                }
                 
-                path.move(to: end); path.addLine(to: p1)
-                path.move(to: end); path.addLine(to: p2)
+                // Start Arrow
+                if a.style == .twoWay {
+                    let angle = atan2(start.y - end.y, start.x - end.x)
+                    let p1 = CGPoint(
+                        x: start.x - arrowLen * cos(angle - arrowAngle),
+                        y: start.y - arrowLen * sin(angle - arrowAngle)
+                    )
+                    let p2 = CGPoint(
+                        x: start.x - arrowLen * cos(angle + arrowAngle),
+                        y: start.y - arrowLen * sin(angle + arrowAngle)
+                    )
+                    path.move(to: start); path.addLine(to: p1)
+                    path.move(to: start); path.addLine(to: p2)
+                }
                 
                 a.uicolor.setStroke()
                 path.lineWidth = a.lineWidth
@@ -714,7 +750,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     func undo() { canvasView.undoManager?.undo() }
     func redo() { canvasView.undoManager?.redo() }
     
-    // ... (keeping previous imports and MarkupTool enum)
+
 
     // MARK: - Interactions
     
@@ -752,6 +788,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
                     startEditingText(for: tv)
                 } else {
                     selectedAnnotation = target
+                    updateToolbarForSelection(target)
                 }
             }
             return
@@ -869,7 +906,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
             if currentTool == .arrow {
                 dragMode = .create
                 selectedAnnotation = nil
-                let arrow = ArrowAnnotationView(start: p, end: p, color: currentColor, lineWidth: 5)
+                let arrow = ArrowAnnotationView(start: p, end: p, color: currentColor, lineWidth: 5, style: currentArrowStyle)
                 addAnnotation(arrow)
                 activeArrow = arrow
                 return
@@ -1004,7 +1041,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     // MARK: - Text Editing Logic
     
     func createText(at p: CGPoint) {
-        let t = TextAnnotationView(text: "", color: currentColor, fontSize: 24)
+        let t = TextAnnotationView(text: "", color: currentColor, fontSize: currentFontSize)
         t.center = p
         // Minimal size for empty
         t.frame.size = CGSize(width: 50, height: 40)
@@ -1204,7 +1241,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         for a in data.arrows {
             let s = CGPoint(x: a.startX * rect.width + rect.minX, y: a.startY * rect.height + rect.minY)
             let e = CGPoint(x: a.endX * rect.width + rect.minX, y: a.endY * rect.height + rect.minY)
-            let v = ArrowAnnotationView(start: s, end: e, color: a.uicolor, lineWidth: a.lineWidth)
+            let v = ArrowAnnotationView(start: s, end: e, color: a.uicolor, lineWidth: a.lineWidth, style: a.style)
             
             v.onDelete = { [weak self] in
                 self?.deleteAnnotation(v)
@@ -1238,55 +1275,99 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         // If editing text, end it when switching tools
         if activeTextView != nil { endEditingText() }
         setTool(tool)
+        
+        // Animate layout changes if toolbar resizes
+        UIView.animate(withDuration: 0.3) {
+            self.view.layoutIfNeeded()
+        }
     }
-    
-
     
     func didSelectColor(_ color: UIColor) {
-        // Fix: Swap Black/White internally to handle PencilKit inversion on dark background
-        var effectiveColor = color
+        // Capture selection because setColor() calls setTool() which clears selectedAnnotation
+        let previouslySelected = selectedAnnotation
         
-        // Helper to compare colors (since UIColor equality can be tricky with different spaces)
-        func isColor(_ c1: UIColor, equalTo c2: UIColor) -> Bool {
-            var r1: CGFloat=0, g1: CGFloat=0, b1: CGFloat=0, a1: CGFloat=0
-            var r2: CGFloat=0, g2: CGFloat=0, b2: CGFloat=0, a2: CGFloat=0
-            c1.getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
-            c2.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
-            return r1==r2 && g1==g2 && b1==b2 && a1==a2
-        }
+        setColor(color)
         
-        if isColor(color, equalTo: MarkupColors.white) {
-            effectiveColor = MarkupColors.black
-        } else if isColor(color, equalTo: MarkupColors.black) {
-            effectiveColor = MarkupColors.white
-        }
-        
-        currentColor = effectiveColor
-        
-        // Update currently selected annotation if any
-        if let selected = selectedAnnotation {
+        // Restore selection and update color
+        if let selected = previouslySelected {
+            selectedAnnotation = selected
+            
             if let tv = selected as? TextAnnotationView {
-                tv.textColor = effectiveColor
+                tv.textColor = color
             } else if let av = selected as? ArrowAnnotationView {
-                av.color = effectiveColor
+                av.color = color
             } else if let sv = selected as? ShapeAnnotationView {
-                sv.color = effectiveColor
+                sv.color = color
             }
         }
-        
-        // Refresh tool (Pen/Marker uses currentColor)
-        setTool(currentTool)
     }
     
-    func viewForZooming(in scrollView: UIScrollView) -> UIView? { contentView }
+    func didSelectTextSize(_ size: CGFloat) {
+        currentFontSize = size
+        if let tv = selectedAnnotation as? TextAnnotationView {
+            tv.fontSize = size
+            // If currently editing, might need to update the TextView font too?
+            // The TextAnnotationView updates label font. 
+            // If activeTextView is present, we should update it.
+            if let activeTV = activeTextView, activeTextAnnotation == tv {
+                activeTV.font = .systemFont(ofSize: size * scrollView.zoomScale, weight: .bold)
+                updateActiveTextViewFrame(activeTV, for: tv)
+            }
+        }
+    }
     
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    // MARK: - Toolbar Synchronization
+    
+    func updateToolbarForSelection(_ selection: BaseAnnotationView?) {
+        guard let selection = selection else { return }
+        
+        // 1. Determine Tool & Properties
+        if let tv = selection as? TextAnnotationView {
+            currentTool = .text
+            currentColor = tv.textColor
+            currentFontSize = tv.fontSize
+            
+            toolbar.selectTool(.text, notifyDelegate: false)
+            toolbar.selectColor(currentColor, notifyDelegate: false)
+            toolbar.selectTextSize(currentFontSize, notifyDelegate: false)
+            
+        } else if let av = selection as? ArrowAnnotationView {
+            currentTool = .arrow
+            currentColor = av.color
+            currentArrowStyle = av.style
+            
+            toolbar.selectTool(.arrow, notifyDelegate: false)
+            toolbar.selectColor(currentColor, notifyDelegate: false)
+            toolbar.selectArrowStyle(currentArrowStyle, notifyDelegate: false)
+            
+        } else if let sv = selection as? ShapeAnnotationView {
+            currentTool = sv.shapeType
+            currentColor = sv.color
+            
+            toolbar.selectTool(sv.shapeType, notifyDelegate: false)
+            toolbar.selectColor(currentColor, notifyDelegate: false)
+        }
+        
+        // Force layout update because disabling notifyDelegate skips the delegate's layout call
+        UIView.animate(withDuration: 0.3) {
+            self.view.layoutIfNeeded()
+        }
+    }
+    
+    func didSelectArrowStyle(_ style: ArrowStyle) {
+        currentArrowStyle = style
+        if let av = selectedAnnotation as? ArrowAnnotationView {
+            av.style = style
+        }
+    }
+    
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
         if let tv = activeTextView, let av = activeTextAnnotation {
             updateActiveTextViewFrame(tv, for: av)
         }
     }
     
-    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
         if let tv = activeTextView, let av = activeTextAnnotation {
             updateActiveTextViewFrame(tv, for: av)
         }

@@ -45,6 +45,12 @@ struct TextAnnotationModel: Codable, Identifiable {
     }
 }
 
+enum ArrowStyle: Int, Codable {
+    case oneWay = 0
+    case twoWay = 1
+    case line = 2
+}
+
 struct ArrowAnnotationModel: Codable, Identifiable {
     var id: UUID = UUID()
     
@@ -56,6 +62,7 @@ struct ArrowAnnotationModel: Codable, Identifiable {
     
     var colorHex: String
     var lineWidth: CGFloat
+    var style: ArrowStyle = .oneWay
     
     var uicolor: UIColor {
         return UIColor(hex: colorHex) ?? .red

@@ -3,6 +3,8 @@ import UIKit
 protocol MarkupToolbarDelegate: AnyObject {
     func didSelectTool(_ tool: MarkupTool)
     func didSelectColor(_ color: UIColor)
+    func didSelectTextSize(_ size: CGFloat)
+    func didSelectArrowStyle(_ style: ArrowStyle)
 }
 
 class MarkupToolbar: UIView {
@@ -13,7 +15,22 @@ class MarkupToolbar: UIView {
     private var toolButtons: [MarkupTool: UIButton] = [:]
     private var colorButtons: [UIButton] = []
     
+
     // Mapping button to color for equality check
+    private var buttonColors: [UIButton: UIColor] = [:]
+    private var orderedTools: [MarkupTool] = []
+    private var orderedColors: [UIColor] = []
+    
+    // Text Size
+    private var selectedTextSize: CGFloat = 16 // Default: Small
+    private var orderedTextSizes: [CGFloat] = [16, 24] // Small, Large (Large ~= previous default)
+    private var textSizeButtons: [UIButton] = []
+    
+    // Arrow Style
+    private var selectedArrowStyle: ArrowStyle = .oneWay
+    private var orderedArrowStyles: [ArrowStyle] = [.oneWay, .twoWay, .line]
+    private var arrowStyleButtons: [UIButton] = []
+    
     // Liquid Glass Indicators
     private let selectionIndicator = UIView()
     private weak var toolStackRef: UIStackView?
@@ -21,10 +38,11 @@ class MarkupToolbar: UIView {
     private let colorSelectionIndicator = UIView()
     private weak var colorStackRef: UIStackView?
     
-    // Mapping button to color for equality check
-    private var buttonColors: [UIButton: UIColor] = [:]
-    private var orderedTools: [MarkupTool] = []
-    private var orderedColors: [UIColor] = []
+    private let textSizeSelectionIndicator = UIView()
+    private weak var textSizeStackRef: UIStackView?
+    
+    private let arrowStyleSelectionIndicator = UIView()
+    private weak var arrowStyleStackRef: UIStackView?
     
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -51,6 +69,76 @@ class MarkupToolbar: UIView {
             mainStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 15),
             mainStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -15)
         ])
+        
+        // 0. Text Size Stack (Hidden by default, Top)
+        let textSizeStack = UIStackView()
+        textSizeStack.axis = .horizontal
+        textSizeStack.spacing = 20
+        textSizeStack.distribution = .fillEqually
+        textSizeStack.isHidden = true // Default hidden
+        textSizeStack.alpha = 0
+        mainStack.addArrangedSubview(textSizeStack)
+        self.textSizeStackRef = textSizeStack
+        
+        // Setup Text Size Indicator
+        textSizeSelectionIndicator.backgroundColor = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0) // Accent Green
+        textSizeSelectionIndicator.layer.cornerRadius = 8
+        textSizeStack.addSubview(textSizeSelectionIndicator)
+        textSizeStack.sendSubviewToBack(textSizeSelectionIndicator)
+        
+        // Add Pan Gesture for Text Size
+        let sizePan = UIPanGestureRecognizer(target: self, action: #selector(handleTextSizePan(_:)))
+        textSizeStack.addGestureRecognizer(sizePan)
+        
+        let sizes: [(CGFloat, String)] = [ (16, "textformat.size.smaller"), (24, "textformat.size.larger") ]
+        for (size, iconName) in sizes {
+            let btn = UIButton()
+            btn.setImage(UIImage(systemName: iconName), for: .normal)
+            btn.tintColor = .white
+            btn.addAction(UIAction { [weak self] _ in self?.selectTextSize(size) }, for: .touchUpInside)
+            textSizeStack.addArrangedSubview(btn)
+            textSizeButtons.append(btn)
+        }
+        
+        
+        // 0.5. Arrow Style Stack (Hidden by default, Top, sibling to TextSize)
+        let arrowStyleStack = UIStackView()
+        arrowStyleStack.axis = .horizontal
+        arrowStyleStack.spacing = 20
+        arrowStyleStack.distribution = .fillEqually
+        arrowStyleStack.isHidden = true
+        arrowStyleStack.alpha = 0
+        mainStack.addArrangedSubview(arrowStyleStack)
+        self.arrowStyleStackRef = arrowStyleStack
+        
+        // Arrow Indicator
+        arrowStyleSelectionIndicator.backgroundColor = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0)
+        arrowStyleSelectionIndicator.layer.cornerRadius = 8
+        arrowStyleStack.addSubview(arrowStyleSelectionIndicator)
+        arrowStyleStack.sendSubviewToBack(arrowStyleSelectionIndicator)
+        
+        // Pan Gesture
+        let arrowPan = UIPanGestureRecognizer(target: self, action: #selector(handleArrowStylePan(_:)))
+        arrowStyleStack.addGestureRecognizer(arrowPan)
+        
+        // Option 1: One-Way (arrow.right)
+        // Option 2: Two-Way (arrow.left.and.right)
+        // Option 3: Line (line.diagonal)
+        // Note: SF Symbols might vary. "line.diagonal" or just a drawn line.
+        let arrowStyles: [(ArrowStyle, String)] = [
+            (.oneWay, "arrow.right"),
+            (.twoWay, "arrow.left.and.right"),
+            (.line, "line.diagonal")
+        ]
+        
+        for (style, icon) in arrowStyles {
+            let btn = UIButton()
+            btn.setImage(UIImage(systemName: icon), for: .normal)
+            btn.tintColor = .white
+            btn.addAction(UIAction { [weak self] _ in self?.selectArrowStyle(style) }, for: .touchUpInside)
+            arrowStyleStack.addArrangedSubview(btn)
+            arrowStyleButtons.append(btn)
+        }
         
         // 1. Tool Stack (Top)
         let toolStack = UIStackView()
@@ -154,12 +242,7 @@ class MarkupToolbar: UIView {
         updateUI(animated: false)
     }
     
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        // Update indicator position on layout change without animation
-        updateSelectionIndicatorPosition(animated: false)
-        updateColorSelectionIndicatorPosition(animated: false)
-    }
+
     
     @objc private func handleToolPan(_ gesture: UIPanGestureRecognizer) {
         guard let toolStack = gesture.view else { return }
@@ -180,6 +263,46 @@ class MarkupToolbar: UIView {
         if tool != selectedTool {
             selectTool(tool)
             // Optional: Light haptic feedback
+            let generator = UISelectionFeedbackGenerator()
+            generator.selectionChanged()
+        }
+    }
+    
+    @objc private func handleTextSizePan(_ gesture: UIPanGestureRecognizer) {
+        guard let sizeStack = gesture.view else { return }
+        let location = gesture.location(in: sizeStack)
+        let width = sizeStack.bounds.width
+        let count = CGFloat(orderedTextSizes.count)
+        
+        guard width > 0, count > 0 else { return }
+        
+        let segmentWidth = width / count
+        let index = Int(floor(location.x / segmentWidth))
+        let clampedIndex = max(0, min(orderedTextSizes.count - 1, index))
+        let size = orderedTextSizes[clampedIndex]
+        
+        if size != selectedTextSize {
+            selectTextSize(size)
+            let generator = UISelectionFeedbackGenerator()
+            generator.selectionChanged()
+        }
+    }
+    
+    @objc private func handleArrowStylePan(_ gesture: UIPanGestureRecognizer) {
+        guard let stack = gesture.view else { return }
+        let location = gesture.location(in: stack)
+        let width = stack.bounds.width
+        let count = CGFloat(orderedArrowStyles.count)
+        
+        guard width > 0, count > 0 else { return }
+        
+        let segmentWidth = width / count
+        let index = Int(floor(location.x / segmentWidth))
+        let clampedIndex = max(0, min(orderedArrowStyles.count - 1, index))
+        let style = orderedArrowStyles[clampedIndex]
+        
+        if style != selectedArrowStyle {
+            selectArrowStyle(style)
             let generator = UISelectionFeedbackGenerator()
             generator.selectionChanged()
         }
@@ -212,15 +335,60 @@ class MarkupToolbar: UIView {
         }
     }
     
-    func selectTool(_ tool: MarkupTool) {
+    func selectTool(_ tool: MarkupTool, notifyDelegate: Bool = true) {
         selectedTool = tool
-        delegate?.didSelectTool(tool)
+        if notifyDelegate {
+            delegate?.didSelectTool(tool)
+        }
+        
+        // Toggle Option Stacks visibility
+        let isText = (tool == .text)
+        let isArrow = (tool == .arrow)
+        
+        // Check if layout needs to change
+        let textHidden = textSizeStackRef?.isHidden ?? true
+        let arrowHidden = arrowStyleStackRef?.isHidden ?? true
+        let layoutChanged = (textHidden == isText) || (arrowHidden == isArrow) // If hidden matches needed visible state (e.g. hidden=true but needs isText=true), that's a change
+        
+        // Correct Logic:
+        // textHidden is current state. !isText is target state.
+        // Change if textHidden != (!isText) -> textHidden == isText
+        
+        UIView.animate(withDuration: 0.3) {
+            self.textSizeStackRef?.isHidden = !isText
+            self.textSizeStackRef?.alpha = isText ? 1.0 : 0.0
+            
+            self.arrowStyleStackRef?.isHidden = !isArrow
+            self.arrowStyleStackRef?.alpha = isArrow ? 1.0 : 0.0
+            
+            self.textSizeStackRef?.superview?.layoutIfNeeded()
+        }
+        
+        // If layout changed, do not animate indicator separately to avoid conflict with layout animation
+        updateUI(animated: !layoutChanged)
+    }
+    
+    func selectTextSize(_ size: CGFloat, notifyDelegate: Bool = true) {
+        selectedTextSize = size
+        if notifyDelegate {
+            delegate?.didSelectTextSize(size)
+        }
         updateUI(animated: true)
     }
     
-    func selectColor(_ color: UIColor) {
+    func selectArrowStyle(_ style: ArrowStyle, notifyDelegate: Bool = true) {
+        selectedArrowStyle = style
+        if notifyDelegate {
+            delegate?.didSelectArrowStyle(style)
+        }
+        updateUI(animated: true)
+    }
+    
+    func selectColor(_ color: UIColor, notifyDelegate: Bool = true) {
         selectedColor = color
-        delegate?.didSelectColor(color)
+        if notifyDelegate {
+            delegate?.didSelectColor(color)
+        }
         updateUI(animated: true)
     }
     
@@ -233,13 +401,33 @@ class MarkupToolbar: UIView {
             b.transform = (t == selectedTool) ? CGAffineTransform(scaleX: 1.1, y: 1.1) : .identity
         }
         
+        // Update Text Size Buttons
+        for (i, b) in textSizeButtons.enumerated() {
+            guard i < orderedTextSizes.count else { continue }
+            let size = orderedTextSizes[i]
+            let isSelected = (size == selectedTextSize)
+            b.tintColor = isSelected ? .white : UIColor.white.withAlphaComponent(0.5)
+            b.transform = isSelected ? CGAffineTransform(scaleX: 1.1, y: 1.1) : .identity
+        }
+        
+        // Update Arrow Style Buttons
+        for (i, b) in arrowStyleButtons.enumerated() {
+            guard i < orderedArrowStyles.count else { continue }
+            let style = orderedArrowStyles[i]
+            let isSelected = (style == selectedArrowStyle)
+            b.tintColor = isSelected ? .white : UIColor.white.withAlphaComponent(0.5)
+            b.transform = isSelected ? CGAffineTransform(scaleX: 1.1, y: 1.1) : .identity
+        }
+        
         updateSelectionIndicatorPosition(animated: animated)
         updateColorSelectionIndicatorPosition(animated: animated)
+        updateTextSizeIndicatorPosition(animated: animated)
+        updateArrowStyleIndicatorPosition(animated: animated)
         
         // Color buttons update
         for btn in colorButtons {
             guard let color = buttonColors[btn] else { continue }
-            let isSelected = color == selectedColor
+            let isSelected = (color.toHex() == selectedColor.toHex())
             
             // Selected color button style:
             // Since we have a green indicator behind, maybe we don't need a border ring anymore?
@@ -281,8 +469,8 @@ class MarkupToolbar: UIView {
     }
     
     private func updateColorSelectionIndicatorPosition(animated: Bool) {
-        // Find button for selected color
-        guard let btn = colorButtons.first(where: { buttonColors[$0] == selectedColor }), let _ = colorStackRef else { return }
+        // Find button for selected color using Hex comparison for tolerance
+        guard let btn = colorButtons.first(where: { buttonColors[$0]?.toHex() == selectedColor.toHex() }), let _ = colorStackRef else { return }
         
         // Indicator frame: slightly larger than button
         // Button is 24x24. Let's make indicator 32x32?
@@ -304,9 +492,61 @@ class MarkupToolbar: UIView {
         }
         
         if animated {
+            UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0.5, options: [.beginFromCurrentState, .allowUserInteraction], animations: updates)
+        } else {
+            updates()
+        }
+    }
+    
+    private func updateTextSizeIndicatorPosition(animated: Bool) {
+        guard let stack = textSizeStackRef, !stack.isHidden else { return }
+        
+        // Find index of selected size
+        guard let index = orderedTextSizes.firstIndex(of: selectedTextSize),
+              index < textSizeButtons.count else { return }
+        
+        let btn = textSizeButtons[index]
+        let targetFrame = btn.frame.insetBy(dx: -4, dy: -4)
+        if targetFrame.width == 0 || targetFrame.height == 0 { return }
+        
+        let updates = {
+            self.textSizeSelectionIndicator.frame = targetFrame
+            self.textSizeSelectionIndicator.layer.cornerRadius = min(targetFrame.width, targetFrame.height) / 2
+        }
+        
+        if animated {
+            UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0.5, options: [.beginFromCurrentState, .allowUserInteraction], animations: updates)
+        } else {
+            updates()
+        }
+    }
+    
+    private func updateArrowStyleIndicatorPosition(animated: Bool) {
+        guard let stack = arrowStyleStackRef, !stack.isHidden else { return }
+        guard let index = orderedArrowStyles.firstIndex(of: selectedArrowStyle), index < arrowStyleButtons.count else { return }
+        
+        let btn = arrowStyleButtons[index]
+        let targetFrame = btn.frame.insetBy(dx: -4, dy: -4)
+        if targetFrame.width == 0 || targetFrame.height == 0 { return }
+        
+        let updates = {
+            self.arrowStyleSelectionIndicator.frame = targetFrame
+            self.arrowStyleSelectionIndicator.layer.cornerRadius = min(targetFrame.width, targetFrame.height) / 2
+        }
+        
+        if animated {
              UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0.5, options: [.beginFromCurrentState, .allowUserInteraction], animations: updates)
         } else {
             updates()
         }
+    }
+    
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Update indicator position on layout change without animation
+        updateSelectionIndicatorPosition(animated: false)
+        updateColorSelectionIndicatorPosition(animated: false)
+        updateTextSizeIndicatorPosition(animated: false)
+        updateArrowStyleIndicatorPosition(animated: false)
     }
 }
