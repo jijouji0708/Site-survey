@@ -113,12 +113,17 @@ class PDFGenerator {
         var currentY = infoY + 30
         let bottomMargin: CGFloat = 80
         
-        // 詳細情報の構築
-        var detailsComponents: [String] = []
+        // 詳細情報の構築（ラベル:値 の形式で配列に保存）
+        var detailsItems: [(label: String, value: String)] = []
         
         // 所在地
         if !caseItem.address.isEmpty {
-            detailsComponents.append("所在地: \(caseItem.address)")
+            detailsItems.append(("所在地", caseItem.address))
+        }
+        
+        // エリア
+        if !caseItem.area.isEmpty {
+            detailsItems.append(("エリア", caseItem.area))
         }
         
         // 作業日時 (入力がある＝空でないor未定でない 場合のみ表示)
@@ -147,16 +152,14 @@ class PDFGenerator {
             let endStr = caseItem.workEndTime.map { timeFormatter.string(from: $0) } ?? "未定"
             let timeStr = "\(startStr) 〜 \(endStr)"
             
-            detailsComponents.append("作業可能日: \(weekdayStr)")
-            detailsComponents.append("作業時間: \(timeStr)")
+            detailsItems.append(("作業可能日", weekdayStr))
+            detailsItems.append(("作業時間", timeStr))
         }
         
-        let detailContent = detailsComponents.joined(separator: "\n")
-        let showDetails = !detailsComponents.isEmpty
+        let showDetails = !detailsItems.isEmpty
         
         // 詳細エリアの高さ（表示時のみ確保）
-        // 内容に応じて高さを微調整してもよいが、一旦固定または行数ベースで確保
-        let detailHeight: CGFloat = showDetails ? (CGFloat(detailsComponents.count) * 20 + 50) : 0
+        let detailHeight: CGFloat = showDetails ? (CGFloat(detailsItems.count) * 20 + 50) : 0
         
         // 全体メモエリアの計算
         // 詳細がある場合はその分上に底上げ
@@ -176,11 +179,10 @@ class PDFGenerator {
             }
         }
         
-        // 詳細情報エリア描画
+        // 詳細情報エリア描画（表形式）
         if showDetails {
-            // detailYは計算済み
             let detailBoxRect = CGRect(x: margin, y: detailY, width: pageWidth - margin*2, height: detailHeight)
-            drawSectionBox(context: context, rect: detailBoxRect, title: "詳細情報", content: detailContent, titleColor: accentGreen)
+            drawDetailsSectionBox(context: context, rect: detailBoxRect, title: "詳細情報", items: detailsItems, titleColor: accentGreen)
         }
         
         // フッターライン
@@ -211,6 +213,48 @@ class PDFGenerator {
             .paragraphStyle: para
         ]
         (content as NSString).draw(in: contentRect, withAttributes: attr)
+    }
+    
+    /// 詳細情報をラベルと値を揃えて描画する
+    private func drawDetailsSectionBox(context: CGContext, rect: CGRect, title: String, items: [(label: String, value: String)], titleColor: UIColor) {
+        context.saveGState()
+        let path = UIBezierPath(roundedRect: rect, cornerRadius: 8)
+        UIColor(white: 0.97, alpha: 1).setFill()
+        path.fill()
+        context.restoreGState()
+        
+        // ラベル
+        (title as NSString).draw(at: CGPoint(x: rect.minX + 15, y: rect.minY + 15), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 14), .foregroundColor: titleColor])
+        
+        // 表形式で描画（ラベル幅を固定して値の開始位置を揃える）
+        let labelWidth: CGFloat = 80 // ラベルの固定幅
+        let labelFont = UIFont.systemFont(ofSize: 11, weight: .medium)
+        let valueFont = UIFont.systemFont(ofSize: 11)
+        let labelColor = UIColor(red: 0.4, green: 0.4, blue: 0.4, alpha: 1)
+        let valueColor = UIColor(red: 0.2, green: 0.2, blue: 0.2, alpha: 1)
+        
+        var y = rect.minY + 45
+        let lineHeight: CGFloat = 20
+        
+        for item in items {
+            // ラベル（左揃え）
+            let labelAttr: [NSAttributedString.Key: Any] = [
+                .font: labelFont,
+                .foregroundColor: labelColor
+            ]
+            let labelX = rect.minX + 15
+            (item.label as NSString).draw(at: CGPoint(x: labelX, y: y), withAttributes: labelAttr)
+            
+            // 値（ラベルの右側に固定位置から開始）
+            let valueAttr: [NSAttributedString.Key: Any] = [
+                .font: valueFont,
+                .foregroundColor: valueColor
+            ]
+            let valueX = rect.minX + 15 + labelWidth + 15 // ラベル幅 + 間隔
+            (item.value as NSString).draw(at: CGPoint(x: valueX, y: y), withAttributes: valueAttr)
+            
+            y += lineHeight
+        }
     }
     
     // MARK: - 写真ページ

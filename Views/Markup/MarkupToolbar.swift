@@ -32,8 +32,8 @@ class MarkupToolbar: UIView {
     private var arrowStyleButtons: [UIButton] = []
     
     // Marker Width
-    private var selectedMarkerWidth: CGFloat = 20 // Default: Thin
-    private var orderedMarkerWidths: [CGFloat] = [20, 40] // Thin, Thick
+    private var selectedMarkerWidth: CGFloat = 10 // Default: Thin
+    private var orderedMarkerWidths: [CGFloat] = [10, 30] // Thin, Thick
     private var markerWidthButtons: [UIButton] = []
     
     // Liquid Glass Indicators

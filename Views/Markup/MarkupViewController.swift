@@ -448,7 +448,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     private var currentColor: UIColor = .red
     private var currentFontSize: CGFloat = 16 // Default Small
     private var currentArrowStyle: ArrowStyle = .oneWay
-    private var currentMarkerWidth: CGFloat = 20 // Default Thin
+    private var currentMarkerWidth: CGFloat = 10 // Default Thin
     
     private var lastLayoutRect: CGRect = .zero
     private var isDataLoaded = false
@@ -566,7 +566,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         
         switch tool {
         case .pen:
-            canvasView.tool = PKInkingTool(.monoline, color: currentColor, width: 5)
+            canvasView.tool = PKInkingTool(.monoline, color: currentColor, width: 2)
             canvasView.isUserInteractionEnabled = true
             overlayView.isUserInteractionEnabled = false
             overlayView.isEraserMode = false

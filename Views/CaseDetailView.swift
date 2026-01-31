@@ -301,6 +301,27 @@ struct CaseDetailView: View {
                     }
                 }
                 
+                // エリア行
+                HStack(alignment: .center, spacing: 12) {
+                    detailLabel("エリア")
+                    
+                    TextField("エリアを入力...", text: $caseItem.area)
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: caseItem.area) { _, _ in
+                            caseItem.touch()
+                        }
+                    
+                    if !caseItem.area.isEmpty {
+                        Button(action: {
+                            caseItem.area = ""
+                            caseItem.touch()
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                
                 // 曜日行
                 HStack(alignment: .center, spacing: 12) {
                     detailLabel("曜日")

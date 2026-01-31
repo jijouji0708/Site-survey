@@ -14,6 +14,7 @@ final class Case {
     var title: String = ""
     var overallNote: String = ""
     var address: String = ""
+    var area: String = "" // エリア（自由入力）
     
     // 詳細情報
     // 曜日: 1=Sun, ..., 7=Sat (Calendar.current.component(.weekday, ...)準拠)
