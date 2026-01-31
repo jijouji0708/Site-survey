@@ -270,6 +270,6 @@ class ImageStorage {
         guard let composite = getCompositeImage(fileName, drawing: drawing, textOverlay: textOverlay) else {
             return nil
         }
-        return resizeImage(composite, maxSize: 400)
+        return resizeImage(composite, maxSize: 800)
     }
 }

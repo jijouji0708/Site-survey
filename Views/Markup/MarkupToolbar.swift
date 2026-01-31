@@ -5,17 +5,17 @@ protocol MarkupToolbarDelegate: AnyObject {
     func didSelectColor(_ color: UIColor)
     func didSelectTextSize(_ size: CGFloat)
     func didSelectArrowStyle(_ style: ArrowStyle)
+    func didSelectMarkerWidth(_ width: CGFloat)
 }
 
 class MarkupToolbar: UIView {
     weak var delegate: MarkupToolbarDelegate?
     private var selectedTool: MarkupTool = .pen
-    private var selectedColor: UIColor = .red
+    private var selectedColor: UIColor = MarkupColors.red
     
     private var toolButtons: [MarkupTool: UIButton] = [:]
     private var colorButtons: [UIButton] = []
     
-
     // Mapping button to color for equality check
     private var buttonColors: [UIButton: UIColor] = [:]
     private var orderedTools: [MarkupTool] = []
@@ -23,13 +23,18 @@ class MarkupToolbar: UIView {
     
     // Text Size
     private var selectedTextSize: CGFloat = 16 // Default: Small
-    private var orderedTextSizes: [CGFloat] = [16, 24] // Small, Large (Large ~= previous default)
+    private var orderedTextSizes: [CGFloat] = [16, 24] // Small, Large
     private var textSizeButtons: [UIButton] = []
     
     // Arrow Style
     private var selectedArrowStyle: ArrowStyle = .oneWay
     private var orderedArrowStyles: [ArrowStyle] = [.oneWay, .twoWay, .line]
     private var arrowStyleButtons: [UIButton] = []
+    
+    // Marker Width
+    private var selectedMarkerWidth: CGFloat = 20 // Default: Thin
+    private var orderedMarkerWidths: [CGFloat] = [20, 40] // Thin, Thick
+    private var markerWidthButtons: [UIButton] = []
     
     // Liquid Glass Indicators
     private let selectionIndicator = UIView()
@@ -43,6 +48,9 @@ class MarkupToolbar: UIView {
     
     private let arrowStyleSelectionIndicator = UIView()
     private weak var arrowStyleStackRef: UIStackView?
+    
+    private let markerWidthSelectionIndicator = UIView()
+    private weak var markerWidthStackRef: UIStackView?
     
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -117,9 +125,39 @@ class MarkupToolbar: UIView {
         arrowStyleStack.addSubview(arrowStyleSelectionIndicator)
         arrowStyleStack.sendSubviewToBack(arrowStyleSelectionIndicator)
         
+        // Marker Width Stack
+        let markerWidthStack = UIStackView()
+        markerWidthStack.axis = .horizontal
+        markerWidthStack.spacing = 20
+        markerWidthStack.distribution = .fillEqually
+        markerWidthStack.isHidden = true // Initially hidden
+        markerWidthStack.alpha = 0
+        mainStack.addArrangedSubview(markerWidthStack)
+        self.markerWidthStackRef = markerWidthStack
+        
+        // Setup Marker Width Indicator
+        markerWidthSelectionIndicator.backgroundColor = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0)
+        markerWidthSelectionIndicator.layer.cornerRadius = 8
+        markerWidthStack.addSubview(markerWidthSelectionIndicator)
+        markerWidthStack.sendSubviewToBack(markerWidthSelectionIndicator)
+        
         // Pan Gesture
-        let arrowPan = UIPanGestureRecognizer(target: self, action: #selector(handleArrowStylePan(_:)))
-        arrowStyleStack.addGestureRecognizer(arrowPan)
+        let markerPan = UIPanGestureRecognizer(target: self, action: #selector(handleMarkerWidthPan(_:)))
+        markerWidthStack.addGestureRecognizer(markerPan)
+        
+        for width in orderedMarkerWidths {
+            let btn = UIButton()
+            // Visuals: Use circle size to represent width.
+            let config = UIImage.SymbolConfiguration(pointSize: width == 20 ? 12 : 20)
+            btn.setImage(UIImage(systemName: "circle.fill", withConfiguration: config), for: .normal)
+            btn.tintColor = .white
+            btn.addAction(UIAction { [weak self] _ in self?.selectMarkerWidth(width) }, for: .touchUpInside)
+            markerWidthStack.addArrangedSubview(btn)
+            markerWidthButtons.append(btn)
+        }
+        
+        // arrowStyleStack implementation follows...
+
         
         // Option 1: One-Way (arrow.right)
         // Option 2: Two-Way (arrow.left.and.right)
@@ -244,6 +282,34 @@ class MarkupToolbar: UIView {
     
 
     
+    private var lastBounds: CGRect = .zero
+    private var hasInitialLayout = false
+    
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        
+        // 1. Handle Initial Layout
+        // Use async to ensure layout pass is FULLY complete before updating UI
+        if !hasInitialLayout {
+            hasInitialLayout = true
+            DispatchQueue.main.async { [weak self] in
+                self?.updateUI(animated: false)
+            }
+        }
+        
+        // 2. Handle Resizing (Rotation, etc.)
+        // Prevent infinite loop by checking if bounds actually changed
+        if bounds != lastBounds {
+            lastBounds = bounds
+            // For resizing, we want immediate update if possible, but async is safer to prevent conflict
+            // However, usually sync is fine here if bounds changed.
+            // Let's stick to the previous safe logic for resizing, but without the guard blocking the initial one.
+            if !hasInitialLayout { return } // Wait for initial async to fire first? No, immediate is fine for resize.
+            
+            updateUI(animated: false)
+        }
+    }
+    
     @objc private func handleToolPan(_ gesture: UIPanGestureRecognizer) {
         guard let toolStack = gesture.view else { return }
         let location = gesture.location(in: toolStack)
@@ -344,28 +410,26 @@ class MarkupToolbar: UIView {
         // Toggle Option Stacks visibility
         let isText = (tool == .text)
         let isArrow = (tool == .arrow)
+        let isMarker = (tool == .marker)
         
-        // Check if layout needs to change
-        let textHidden = textSizeStackRef?.isHidden ?? true
-        let arrowHidden = arrowStyleStackRef?.isHidden ?? true
-        let layoutChanged = (textHidden == isText) || (arrowHidden == isArrow) // If hidden matches needed visible state (e.g. hidden=true but needs isText=true), that's a change
+        // Step 1: Set hidden state IMMEDIATELY (no animation)
+        textSizeStackRef?.isHidden = !isText
+        arrowStyleStackRef?.isHidden = !isArrow
+        markerWidthStackRef?.isHidden = !isMarker
         
-        // Correct Logic:
-        // textHidden is current state. !isText is target state.
-        // Change if textHidden != (!isText) -> textHidden == isText
+        // Step 2: Force layout update BEFORE reading frame values
+        setNeedsLayout()
+        layoutIfNeeded()
         
-        UIView.animate(withDuration: 0.3) {
-            self.textSizeStackRef?.isHidden = !isText
+        // Step 3: Update indicator position with correct frame values
+        updateUI(animated: true)
+        
+        // Step 4: Animate alpha for visual smoothness
+        UIView.animate(withDuration: 0.2) {
             self.textSizeStackRef?.alpha = isText ? 1.0 : 0.0
-            
-            self.arrowStyleStackRef?.isHidden = !isArrow
             self.arrowStyleStackRef?.alpha = isArrow ? 1.0 : 0.0
-            
-            self.textSizeStackRef?.superview?.layoutIfNeeded()
+            self.markerWidthStackRef?.alpha = isMarker ? 1.0 : 0.0
         }
-        
-        // If layout changed, do not animate indicator separately to avoid conflict with layout animation
-        updateUI(animated: !layoutChanged)
     }
     
     func selectTextSize(_ size: CGFloat, notifyDelegate: Bool = true) {
@@ -382,6 +446,33 @@ class MarkupToolbar: UIView {
             delegate?.didSelectArrowStyle(style)
         }
         updateUI(animated: true)
+    }
+    
+    func selectMarkerWidth(_ width: CGFloat, notifyDelegate: Bool = true) {
+        selectedMarkerWidth = width
+        if notifyDelegate {
+            delegate?.didSelectMarkerWidth(width)
+        }
+        updateUI(animated: true)
+    }
+    
+    @objc private func handleMarkerWidthPan(_ gesture: UIPanGestureRecognizer) {
+        guard let stack = gesture.view else { return }
+        let location = gesture.location(in: stack)
+        let width = stack.bounds.width
+        let count = CGFloat(orderedMarkerWidths.count)
+        guard width > 0, count > 0 else { return }
+        
+        let segmentWidth = width / count
+        let index = Int(floor(location.x / segmentWidth))
+        let clampedIndex = max(0, min(orderedMarkerWidths.count - 1, index))
+        let w = orderedMarkerWidths[clampedIndex]
+        
+        if w != selectedMarkerWidth {
+            selectMarkerWidth(w)
+            let generator = UISelectionFeedbackGenerator()
+            generator.selectionChanged()
+        }
     }
     
     func selectColor(_ color: UIColor, notifyDelegate: Bool = true) {
@@ -419,20 +510,26 @@ class MarkupToolbar: UIView {
             b.transform = isSelected ? CGAffineTransform(scaleX: 1.1, y: 1.1) : .identity
         }
         
+        // Update Marker Width Buttons
+        for (i, b) in markerWidthButtons.enumerated() {
+            guard i < orderedMarkerWidths.count else { continue }
+            let width = orderedMarkerWidths[i]
+            let isSelected = (width == selectedMarkerWidth)
+            b.tintColor = isSelected ? .white : UIColor.white.withAlphaComponent(0.5)
+            b.transform = isSelected ? CGAffineTransform(scaleX: 1.1, y: 1.1) : .identity
+        }
+        
         updateSelectionIndicatorPosition(animated: animated)
         updateColorSelectionIndicatorPosition(animated: animated)
         updateTextSizeIndicatorPosition(animated: animated)
         updateArrowStyleIndicatorPosition(animated: animated)
+        updateMarkerWidthIndicatorPosition(animated: animated)
         
         // Color buttons update
         for btn in colorButtons {
+            // ... (rest of method is same)
             guard let color = buttonColors[btn] else { continue }
             let isSelected = (color.toHex() == selectedColor.toHex())
-            
-            // Selected color button style:
-            // Since we have a green indicator behind, maybe we don't need a border ring anymore?
-            // Or maybe keep it simple. User said "same way".
-            // Let's keep the button itself clean.
             
             if isSelected {
                 btn.transform = CGAffineTransform(scaleX: 1.2, y: 1.2)
@@ -541,12 +638,24 @@ class MarkupToolbar: UIView {
         }
     }
     
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        // Update indicator position on layout change without animation
-        updateSelectionIndicatorPosition(animated: false)
-        updateColorSelectionIndicatorPosition(animated: false)
-        updateTextSizeIndicatorPosition(animated: false)
-        updateArrowStyleIndicatorPosition(animated: false)
+
+    private func updateMarkerWidthIndicatorPosition(animated: Bool) {
+        guard let stack = markerWidthStackRef, !stack.isHidden else { return }
+        guard let index = orderedMarkerWidths.firstIndex(of: selectedMarkerWidth), index < markerWidthButtons.count else { return }
+        
+        let btn = markerWidthButtons[index]
+        let targetFrame = btn.frame.insetBy(dx: -4, dy: -4)
+        if targetFrame.width == 0 || targetFrame.height == 0 { return }
+        
+        let updates = {
+            self.markerWidthSelectionIndicator.frame = targetFrame
+            self.markerWidthSelectionIndicator.layer.cornerRadius = min(targetFrame.width, targetFrame.height) / 2
+        }
+        
+        if animated {
+            UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0.5, options: [.beginFromCurrentState, .allowUserInteraction], animations: updates)
+        } else {
+            updates()
+        }
     }
 }

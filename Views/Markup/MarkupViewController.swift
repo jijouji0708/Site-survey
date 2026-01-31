@@ -415,7 +415,7 @@ class MarkupOverlayView: UIView {
 }
 
 
-class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPickerObserver, MarkupToolbarDelegate {
+class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPickerObserver, MarkupToolbarDelegate, UIGestureRecognizerDelegate {
     
     // Public API
     var image: UIImage?
@@ -448,6 +448,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     private var currentColor: UIColor = .red
     private var currentFontSize: CGFloat = 16 // Default Small
     private var currentArrowStyle: ArrowStyle = .oneWay
+    private var currentMarkerWidth: CGFloat = 20 // Default Thin
     
     private var lastLayoutRect: CGRect = .zero
     private var isDataLoaded = false
@@ -530,6 +531,10 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         scrollView.minimumZoomScale = 1.0
         scrollView.maximumZoomScale = 5.0
         scrollView.bouncesZoom = true
+        
+        // Fix: Allow 1-finger drawing (Overlay/Canvas) but require 2 fingers for scrolling
+        scrollView.panGestureRecognizer.minimumNumberOfTouches = 2
+        scrollView.delaysContentTouches = false
     }
     
     func setupCanvas() {
@@ -548,6 +553,8 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         overlayView.addGestureRecognizer(tap)
         
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = self // Allow concurrent recognition
         overlayView.addGestureRecognizer(pan)
     }
     
@@ -559,12 +566,15 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         
         switch tool {
         case .pen:
-            canvasView.tool = PKInkingTool(.pen, color: currentColor, width: 5)
+            canvasView.tool = PKInkingTool(.monoline, color: currentColor, width: 5)
             canvasView.isUserInteractionEnabled = true
             overlayView.isUserInteractionEnabled = false
             overlayView.isEraserMode = false
         case .marker:
-            canvasView.tool = PKInkingTool(.marker, color: currentColor, width: 20)
+            // Fix: User requested HALF opacity. Original is naturally translucent (~0.5?). 
+            // Setting alpha 0.4 on top gives ~0.2 visual opacity? Let's try 0.3 to be "half".
+            let markerColor = currentColor.withAlphaComponent(0.3)
+            canvasView.tool = PKInkingTool(.marker, color: markerColor, width: currentMarkerWidth)
             canvasView.isUserInteractionEnabled = true
             overlayView.isUserInteractionEnabled = false
             overlayView.isEraserMode = false
@@ -717,8 +727,11 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
                     path.move(to: start); path.addLine(to: p2)
                 }
                 
+                
                 a.uicolor.setStroke()
-                path.lineWidth = a.lineWidth
+                // Fix: Scale line width for image resolution
+                // Removed 1.5x multiplier to match screen appearance exactly
+                path.lineWidth = a.lineWidth * (1.0 / scale)
                 path.lineCapStyle = .round
                 path.lineJoinStyle = .round
                 path.stroke()
@@ -739,7 +752,8 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
                 }
                 
                 s.uicolor.setStroke()
-                path.lineWidth = s.lineWidth
+                // Fix: Scale line width for image resolution
+                path.lineWidth = s.lineWidth * (1.0 / scale)
                 path.stroke()
             }
         }
@@ -833,7 +847,13 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     private var dragStartPoint: CGPoint = .zero
 
     @objc func handlePan(_ g: UIPanGestureRecognizer) {
-        if currentTool == .eraser { return } // Disable panning (move/resize) in eraser mode
+        if currentTool == .eraser { return }
+        
+        // Abort if scrolling/zooming or using multiple fingers (which implies zoom intent)
+        if scrollView.isDragging || scrollView.isZooming || g.numberOfTouches > 1 {
+            g.state = .cancelled
+            return
+        }
         
         let p = g.location(in: overlayView)
         
@@ -906,14 +926,14 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
             if currentTool == .arrow {
                 dragMode = .create
                 selectedAnnotation = nil
-                let arrow = ArrowAnnotationView(start: p, end: p, color: currentColor, lineWidth: 5, style: currentArrowStyle)
+                let arrow = ArrowAnnotationView(start: p, end: p, color: currentColor, lineWidth: 1.5, style: currentArrowStyle)
                 addAnnotation(arrow)
                 activeArrow = arrow
                 return
             } else if currentTool == .rect || currentTool == .circle {
                 dragMode = .create
                 selectedAnnotation = nil
-                let shape = ShapeAnnotationView(frame: CGRect(origin: p, size: .zero), shapeType: currentTool, color: currentColor, lineWidth: 5)
+                let shape = ShapeAnnotationView(frame: CGRect(origin: p, size: .zero), shapeType: currentTool, color: currentColor, lineWidth: 1.5)
                 addAnnotation(shape)
                 activeShape = shape
                 dragStartPoint = p // Origin
@@ -1361,10 +1381,23 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         }
     }
     
+    func didSelectMarkerWidth(_ width: CGFloat) {
+        currentMarkerWidth = width
+        if currentTool == .marker {
+             // Apply opacity fix here too
+            let markerColor = currentColor.withAlphaComponent(0.3)
+            canvasView.tool = PKInkingTool(.marker, color: markerColor, width: currentMarkerWidth)
+        }
+    }
+    
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         if let tv = activeTextView, let av = activeTextAnnotation {
             updateActiveTextViewFrame(tv, for: av)
         }
+    }
+    
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+        return contentView
     }
     
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -1372,6 +1405,17 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
             updateActiveTextViewFrame(tv, for: av)
         }
     }
+    // MARK: - UIGestureRecognizerDelegate
+    
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // Allow Overlay Pan to coexist with ScrollView Pan/Pinch
+        // (ScrollView pan requires 2 fingers, Overlay Pan max 1 finger - but we allow them to negotiate)
+        if gestureRecognizer.view == overlayView {
+            return true
+        }
+        return false
+    }
+
 }
 
 extension MarkupViewController: UITextViewDelegate {

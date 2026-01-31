@@ -156,7 +156,7 @@ struct CaseDetailView: View {
     
     private var overallNoteSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("全体メモ")
+            Text("メモ")
                 .font(.headline)
             
             TextField("メモを入力...", text: $caseItem.overallNote, axis: .vertical)

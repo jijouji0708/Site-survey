@@ -172,7 +172,7 @@ class PDFGenerator {
             // noteHeightが小さすぎないかチェック
             if noteHeight > 40 {
                 let noteBoxRect = CGRect(x: margin, y: currentY, width: pageWidth - margin*2, height: noteHeight)
-                drawSectionBox(context: context, rect: noteBoxRect, title: "全体メモ", content: overallNote, titleColor: accentGreen)
+                drawSectionBox(context: context, rect: noteBoxRect, title: "メモ", content: overallNote, titleColor: accentGreen)
             }
         }
         
