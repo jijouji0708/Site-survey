@@ -566,14 +566,14 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         
         switch tool {
         case .pen:
-            canvasView.tool = PKInkingTool(.monoline, color: currentColor, width: 2)
+            canvasView.tool = PKInkingTool(.monoline, color: currentColor, width: 1)
             canvasView.isUserInteractionEnabled = true
             overlayView.isUserInteractionEnabled = false
             overlayView.isEraserMode = false
         case .marker:
             // Fix: User requested HALF opacity. Original is naturally translucent (~0.5?). 
             // Setting alpha 0.4 on top gives ~0.2 visual opacity? Let's try 0.3 to be "half".
-            let markerColor = currentColor.withAlphaComponent(0.3)
+            let markerColor = currentColor.withAlphaComponent(0.45)
             canvasView.tool = PKInkingTool(.marker, color: markerColor, width: currentMarkerWidth)
             canvasView.isUserInteractionEnabled = true
             overlayView.isUserInteractionEnabled = false
@@ -1385,7 +1385,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         currentMarkerWidth = width
         if currentTool == .marker {
              // Apply opacity fix here too
-            let markerColor = currentColor.withAlphaComponent(0.3)
+            let markerColor = currentColor.withAlphaComponent(0.45)
             canvasView.tool = PKInkingTool(.marker, color: markerColor, width: currentMarkerWidth)
         }
     }

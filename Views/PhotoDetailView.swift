@@ -258,20 +258,22 @@ struct PhotoDetailView: View {
     
     private func moveToPrevious() {
         guard let parent = currentPhoto.parentCase,
-              let index = parent.sortedPhotos.firstIndex(of: currentPhoto),
-              index > 0 else { return }
+              let index = parent.sortedPhotos.firstIndex(of: currentPhoto) else { return }
         
-        let prevPhoto = parent.sortedPhotos[index - 1]
+        // 最初の写真なら最後にループ
+        let prevIndex = index > 0 ? index - 1 : parent.sortedPhotos.count - 1
+        let prevPhoto = parent.sortedPhotos[prevIndex]
         currentPhoto = prevPhoto
         loadImage()
     }
     
     private func moveToNext() {
         guard let parent = currentPhoto.parentCase,
-              let index = parent.sortedPhotos.firstIndex(of: currentPhoto),
-              index < parent.sortedPhotos.count - 1 else { return }
+              let index = parent.sortedPhotos.firstIndex(of: currentPhoto) else { return }
         
-        let nextPhoto = parent.sortedPhotos[index + 1]
+        // 最後の写真なら最初にループ
+        let nextIndex = index < parent.sortedPhotos.count - 1 ? index + 1 : 0
+        let nextPhoto = parent.sortedPhotos[nextIndex]
         currentPhoto = nextPhoto
         loadImage()
     }

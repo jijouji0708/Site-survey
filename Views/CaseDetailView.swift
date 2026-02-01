@@ -38,8 +38,9 @@ struct CaseDetailView: View {
     @State private var isDetailsExpanded = false // 詳細セクションの開閉状態
     
     @State private var draggingPhoto: CasePhoto? // ドラッグ中の写真を追跡
-    @State private var photoViewMode: PhotoViewMode = .grid // 写真表示モード
+    @State private var photoViewMode: PhotoViewMode = .list // 写真表示モード（リストがデフォルト）
     @State private var showMemoLineAlert = false // メモ行数超過アラート
+    @FocusState private var focusedPhotoId: UUID? // リスト表示時のフォーカス管理
     
     // アクセントカラー（緑）- 仕様: Color(red: 0.2, green: 0.78, blue: 0.35)
     private let accentGreen = Color(red: 0.2, green: 0.78, blue: 0.35)
@@ -105,9 +106,29 @@ struct CaseDetailView: View {
                 }
             }
             
-            // キーボード完了ボタン
+            // キーボード完了ボタン（リスト表示時は上下ナビも表示）
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
+                
+                // リスト表示時のみ上下ナビゲーションを表示
+                if photoViewMode == .list {
+                    // 上の写真に移動
+                    Button(action: {
+                        moveFocusToPreviousPhoto()
+                    }) {
+                        Image(systemName: "chevron.up")
+                    }
+                    .disabled(!canMoveToPrevious())
+                    
+                    // 下の写真に移動
+                    Button(action: {
+                        moveFocusToNextPhoto()
+                    }) {
+                        Image(systemName: "chevron.down")
+                    }
+                    .disabled(!canMoveToNext())
+                }
+                
                 Button("完了") {
                     UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                 }
@@ -302,13 +323,15 @@ struct CaseDetailView: View {
     
     // リスト表示（写真 + メモ入力欄）
     private var listPhotoView: some View {
-        // 6行分の高さを計算（caption font ≈ 12pt、行間含めて約16pt/行）
-        let sixLineHeight: CGFloat = 100 // 6行 × 約16pt + パディング
+        // 画面幅に応じてサムネイルサイズを動的に計算
+        let screenWidth = UIScreen.main.bounds.width
+        let thumbnailSize: CGFloat = max(80, min(120, screenWidth * 0.25)) // 画面幅の25%、80-120の範囲
+        let sortedPhotos = caseItem.sortedPhotos
         
         return LazyVStack(spacing: 12) {
-            ForEach(Array(caseItem.sortedPhotos.enumerated()), id: \.element.id) { index, photo in
+            ForEach(Array(sortedPhotos.enumerated()), id: \.element.id) { index, photo in
                 HStack(alignment: .top, spacing: 12) {
-                    // 写真サムネイル（PhotoThumbViewを使用、固定サイズ）
+                    // 写真サムネイル（PhotoThumbViewを使用、動的サイズ）
                     PhotoThumbView(
                         photo: photo,
                         index: index + 1,
@@ -320,39 +343,85 @@ struct CaseDetailView: View {
                             showDeleteAlert = true
                         }
                     )
-                    .frame(width: 100, height: sixLineHeight)
+                    .frame(width: thumbnailSize, height: thumbnailSize)
                     
-                    // メモ入力欄（6行固定高さ、6行制限）
-                    TextField("メモを入力...", text: Binding(
-                        get: { photo.note },
-                        set: { newValue in
-                            // 行数チェック
-                            let lineCount = newValue.components(separatedBy: "\n").count
-                            if lineCount > 6 {
-                                // 6行を超えたら警告を表示し、入力を制限
-                                showMemoLineAlert = true
-                                // 6行目までのみ保持
-                                let lines = newValue.components(separatedBy: "\n")
-                                photo.note = lines.prefix(6).joined(separator: "\n")
-                            } else {
+                    // メモ入力欄（6行超過分は赤で表示）
+                    VStack(alignment: .leading, spacing: 2) {
+                        TextField("メモを入力...", text: Binding(
+                            get: { photo.note },
+                            set: { newValue in
                                 photo.note = newValue
+                                caseItem.touch()
                             }
-                            caseItem.touch()
+                        ), axis: .vertical)
+                        .lineLimit(6)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption)
+                        .focused($focusedPhotoId, equals: photo.id)
+                        
+                        // 6行を超えている場合、超過分を赤で表示
+                        let lines = photo.note.components(separatedBy: "\n")
+                        if lines.count > 6 {
+                            let overflowLines = Array(lines.dropFirst(6))
+                            Text(overflowLines.joined(separator: "\n"))
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .lineLimit(nil)
+                            
+                            Text("※7行目以降はPDFに表示されません")
+                                .font(.caption2)
+                                .foregroundColor(.red)
                         }
-                    ), axis: .vertical)
-                    .lineLimit(6) // 6行固定
-                    .textFieldStyle(.roundedBorder)
-                    .font(.caption)
-                    .frame(height: sixLineHeight, alignment: .topLeading) // 6行分の高さ
+                    }
+                    .frame(minHeight: thumbnailSize, alignment: .topLeading)
                 }
                 .padding(.vertical, 4)
+                .onDrag {
+                    self.draggingPhoto = photo
+                    return NSItemProvider(object: photo.id.uuidString as NSString)
+                }
+                .onDrop(of: [UTType.text], delegate: PhotoDropDelegate(
+                    photo: photo,
+                    caseItem: caseItem,
+                    draggingPhoto: draggingPhoto,
+                    modelContext: modelContext
+                ))
             }
         }
-        .alert("メモは6行までです", isPresented: $showMemoLineAlert) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("PDFに表示できるメモは6行までです。それ以降の行は表示されません。")
-        }
+    }
+    
+    // 前の写真に移動可能か
+    private func canMoveToPrevious() -> Bool {
+        let photos = caseItem.sortedPhotos
+        guard let currentId = focusedPhotoId,
+              let currentIndex = photos.firstIndex(where: { $0.id == currentId }) else { return false }
+        return currentIndex > 0
+    }
+    
+    // 次の写真に移動可能か
+    private func canMoveToNext() -> Bool {
+        let photos = caseItem.sortedPhotos
+        guard let currentId = focusedPhotoId,
+              let currentIndex = photos.firstIndex(where: { $0.id == currentId }) else { return false }
+        return currentIndex < photos.count - 1
+    }
+    
+    // 前の写真のメモにフォーカスを移動
+    private func moveFocusToPreviousPhoto() {
+        let photos = caseItem.sortedPhotos
+        guard let currentId = focusedPhotoId,
+              let currentIndex = photos.firstIndex(where: { $0.id == currentId }),
+              currentIndex > 0 else { return }
+        focusedPhotoId = photos[currentIndex - 1].id
+    }
+    
+    // 次の写真のメモにフォーカスを移動
+    private func moveFocusToNextPhoto() {
+        let photos = caseItem.sortedPhotos
+        guard let currentId = focusedPhotoId,
+              let currentIndex = photos.firstIndex(where: { $0.id == currentId }),
+              currentIndex < photos.count - 1 else { return }
+        focusedPhotoId = photos[currentIndex + 1].id
     }
     
     // MARK: - Actions
@@ -569,10 +638,21 @@ struct CaseDetailView: View {
         guard let image = ImageStorage.shared.loadImage(photo.imageFileName),
               let newFileName = ImageStorage.shared.saveImage(image) else { return }
         
-        let newPhoto = CasePhoto(imageFileName: newFileName, orderIndex: caseItem.photos.count)
+        // 元の写真のインデックスを取得
+        let originalIndex = photo.orderIndex
+        
+        // 新しい写真を作成（元の写真のすぐ後ろに挿入）
+        let newPhoto = CasePhoto(imageFileName: newFileName, orderIndex: originalIndex + 1)
         newPhoto.note = photo.note
         newPhoto.markupData = photo.markupData
         newPhoto.parentCase = caseItem
+        
+        // 元の写真より後ろにある全ての写真のorderIndexを+1
+        for existingPhoto in caseItem.photos {
+            if existingPhoto.orderIndex > originalIndex {
+                existingPhoto.orderIndex += 1
+            }
+        }
         
         caseItem.photos.append(newPhoto)
         caseItem.touch()
@@ -707,87 +787,89 @@ struct PhotoThumbView: View {
     
     private let accentGreen = Color(red: 0.2, green: 0.78, blue: 0.35)
     
-
-    
     var body: some View {
-        NavigationLink(destination: PhotoDetailView(photo: photo)) {
-            // 仕様: 正方形コンテナ
-            Color.clear
-                .aspectRatio(1.0, contentMode: .fit) // 正方形を強制
-                .overlay(
-                    ZStack(alignment: .topLeading) {
-                        // 背景（白）
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.white)
-                            .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
+        GeometryReader { geometry in
+            let size = min(geometry.size.width, geometry.size.height)
+            let buttonSize: CGFloat = max(20, size * 0.22) // ボタンサイズを相対的に計算
+            let badgeSize: CGFloat = max(18, size * 0.2) // バッジサイズを相対的に計算
+            let padding: CGFloat = max(3, size * 0.05)
+            
+            NavigationLink(destination: PhotoDetailView(photo: photo)) {
+                ZStack(alignment: .topLeading) {
+                    // 背景（白）
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.white)
+                        .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
+                    
+                    // サムネイル画像（全体表示）
+                    if let image = thumbImage {
+                        Image(uiImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .padding(padding * 1.5)
+                    } else {
+                        ProgressView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    
+                    // 番号バッジ（緑円形）
+                    ZStack {
+                        Circle()
+                            .fill(accentGreen)
+                            .frame(width: badgeSize, height: badgeSize)
                         
-                        // サムネイル画像（全体表示）
-                        if let image = thumbImage {
-                            Image(uiImage: image)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit) // 全体を表示
-                                .padding(8) // 余白を持たせる
-                        } else {
-                            ProgressView()
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        }
-                        
-                        // 番号バッジ（緑円形）
-                        ZStack {
-                            Circle()
-                                .fill(accentGreen)
-                                .frame(width: 24, height: 24)
+                        Text("\(index)")
+                            .font(.system(size: badgeSize * 0.55, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                    .padding(padding)
+                    
+                    // 操作ボタン
+                    VStack {
+                        Spacer()
+                        HStack(spacing: padding * 0.8) {
+                            // マークアップボタン（オレンジ）
+                            NavigationLink(destination: MarkupLoaderView(photo: photo)) {
+                                Image(systemName: "pencil.tip.crop.circle")
+                                    .font(.system(size: buttonSize * 0.5))
+                                    .foregroundColor(.white)
+                                    .frame(width: buttonSize, height: buttonSize)
+                                    .background(Color.orange)
+                                    .clipShape(Circle())
+                            }
                             
-                            Text("\(index)")
-                                .font(.caption.bold())
-                                .foregroundColor(.white)
-                        }
-                        .padding(6)
-                        
-                        // 操作ボタン
-                        if true { // 常に表示
-                            VStack {
-                                Spacer()
-                                HStack(spacing: 4) {
-                                    // マークアップボタン（オレンジ）
-                                    NavigationLink(destination: MarkupLoaderView(photo: photo)) {
-                                        Image(systemName: "pencil.tip.crop.circle")
-                                            .font(.caption)
-                                            .foregroundColor(.white)
-                                            .padding(6)
-                                            .background(Color.orange)
-                                            .clipShape(Circle())
-                                    }
-                                    
-                                    Spacer()
-                                    
-                                    // 複製ボタン（緑）
-                                    Button(action: onDuplicate) {
-                                        Image(systemName: "doc.on.doc")
-                                            .font(.caption)
-                                            .foregroundColor(.white)
-                                            .padding(6)
-                                            .background(accentGreen)
-                                            .clipShape(Circle())
-                                    }
-                                    
-                                    // 削除ボタン（赤）
-                                    Button(action: onDelete) {
-                                        Image(systemName: "trash")
-                                            .font(.caption)
-                                            .foregroundColor(.white)
-                                            .padding(6)
-                                            .background(Color.red)
-                                            .clipShape(Circle())
-                                    }
-                                }
-                                .padding(6)
+                            Spacer()
+                            
+                            // 複製ボタン（緑）
+                            Button(action: onDuplicate) {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.system(size: buttonSize * 0.5))
+                                    .foregroundColor(.white)
+                                    .frame(width: buttonSize, height: buttonSize)
+                                    .background(accentGreen)
+                                    .clipShape(Circle())
+                            }
+                            
+                            // 削除ボタン（赤）
+                            Button(action: onDelete) {
+                                Image(systemName: "trash")
+                                    .font(.system(size: buttonSize * 0.5))
+                                    .foregroundColor(.white)
+                                    .frame(width: buttonSize, height: buttonSize)
+                                    .background(Color.red)
+                                    .clipShape(Circle())
                             }
                         }
+                        .padding(padding)
                     }
-                )
+                }
+                .frame(width: size, height: size)
+                .clipped() // はみ出し防止
+            }
+            .buttonStyle(.plain)
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
-        .buttonStyle(.plain)
+        .aspectRatio(1.0, contentMode: .fit) // 正方形を維持
         .onAppear {
             loadThumb()
         }
