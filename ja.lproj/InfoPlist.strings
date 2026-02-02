@@ -2,3 +2,4 @@ CFBundleDisplayName = "シンプル現場調査";
 CFBundleName = "シンプル現場調査";
 NSCameraUsageDescription = "現場の写真を撮影するためにカメラを使用します。";
 NSPhotoLibraryUsageDescription = "現場の写真を追加するためにフォトライブラリを使用します。";
+NSPhotoLibraryAddUsageDescription = "撮影した写真を写真アプリに保存するために使用します。";

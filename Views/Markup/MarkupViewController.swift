@@ -444,11 +444,12 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     
     // Logic
     private let toolPicker = PKToolPicker()
-    private var currentTool: MarkupTool = .pen
+    private var currentTool: MarkupTool = .arrow
     private var currentColor: UIColor = .red
     private var currentFontSize: CGFloat = 16 // Default Small
     private var currentArrowStyle: ArrowStyle = .oneWay
     private var currentMarkerWidth: CGFloat = 10 // Default Thin
+    private var currentPenWidth: CGFloat = 1 // Default Medium
     
     private var lastLayoutRect: CGRect = .zero
     private var isDataLoaded = false
@@ -545,7 +546,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         toolPicker.addObserver(self)
         toolPicker.setVisible(true, forFirstResponder: canvasView)
         
-        setTool(.pen) // Default
+        setTool(.arrow) // Default to arrow tool
     }
     
     func setupOverlayInteraction() {
@@ -566,7 +567,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         
         switch tool {
         case .pen:
-            canvasView.tool = PKInkingTool(.monoline, color: currentColor, width: 1)
+            canvasView.tool = PKInkingTool(.monoline, color: currentColor, width: currentPenWidth)
             canvasView.isUserInteractionEnabled = true
             overlayView.isUserInteractionEnabled = false
             overlayView.isEraserMode = false
@@ -1387,6 +1388,13 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
              // Apply opacity fix here too
             let markerColor = currentColor.withAlphaComponent(0.45)
             canvasView.tool = PKInkingTool(.marker, color: markerColor, width: currentMarkerWidth)
+        }
+    }
+    
+    func didSelectPenWidth(_ width: CGFloat) {
+        currentPenWidth = width
+        if currentTool == .pen {
+            canvasView.tool = PKInkingTool(.monoline, color: currentColor, width: currentPenWidth)
         }
     }
     

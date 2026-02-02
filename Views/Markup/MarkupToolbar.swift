@@ -6,11 +6,12 @@ protocol MarkupToolbarDelegate: AnyObject {
     func didSelectTextSize(_ size: CGFloat)
     func didSelectArrowStyle(_ style: ArrowStyle)
     func didSelectMarkerWidth(_ width: CGFloat)
+    func didSelectPenWidth(_ width: CGFloat)
 }
 
 class MarkupToolbar: UIView {
     weak var delegate: MarkupToolbarDelegate?
-    private var selectedTool: MarkupTool = .pen
+    private var selectedTool: MarkupTool = .arrow
     private var selectedColor: UIColor = MarkupColors.red
     
     private var toolButtons: [MarkupTool: UIButton] = [:]
@@ -36,6 +37,11 @@ class MarkupToolbar: UIView {
     private var orderedMarkerWidths: [CGFloat] = [10, 30] // Thin, Thick
     private var markerWidthButtons: [UIButton] = []
     
+    // Pen Width
+    private var selectedPenWidth: CGFloat = 1 // Default: Medium (current)
+    private var orderedPenWidths: [CGFloat] = [0.5, 1, 2] // Thin, Medium, Thick
+    private var penWidthButtons: [UIButton] = []
+    
     // Liquid Glass Indicators
     private let selectionIndicator = UIView()
     private weak var toolStackRef: UIStackView?
@@ -51,6 +57,9 @@ class MarkupToolbar: UIView {
     
     private let markerWidthSelectionIndicator = UIView()
     private weak var markerWidthStackRef: UIStackView?
+    
+    private let penWidthSelectionIndicator = UIView()
+    private weak var penWidthStackRef: UIStackView?
     
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -154,6 +163,38 @@ class MarkupToolbar: UIView {
             btn.addAction(UIAction { [weak self] _ in self?.selectMarkerWidth(width) }, for: .touchUpInside)
             markerWidthStack.addArrangedSubview(btn)
             markerWidthButtons.append(btn)
+        }
+        
+        // Pen Width Stack
+        let penWidthStack = UIStackView()
+        penWidthStack.axis = .horizontal
+        penWidthStack.spacing = 20
+        penWidthStack.distribution = .fillEqually
+        penWidthStack.isHidden = true // Initially hidden
+        penWidthStack.alpha = 0
+        mainStack.addArrangedSubview(penWidthStack)
+        self.penWidthStackRef = penWidthStack
+        
+        // Setup Pen Width Indicator
+        penWidthSelectionIndicator.backgroundColor = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0)
+        penWidthSelectionIndicator.layer.cornerRadius = 8
+        penWidthStack.addSubview(penWidthSelectionIndicator)
+        penWidthStack.sendSubviewToBack(penWidthSelectionIndicator)
+        
+        // Pan Gesture for Pen Width
+        let penPan = UIPanGestureRecognizer(target: self, action: #selector(handlePenWidthPan(_:)))
+        penWidthStack.addGestureRecognizer(penPan)
+        
+        // Pen Width Buttons: 0.5 (thin), 1 (medium), 2 (thick)
+        let penWidthConfigs: [(CGFloat, CGFloat)] = [(0.5, 8), (1, 12), (2, 18)] // (width, icon size)
+        for (width, iconSize) in penWidthConfigs {
+            let btn = UIButton()
+            let config = UIImage.SymbolConfiguration(pointSize: iconSize)
+            btn.setImage(UIImage(systemName: "circle.fill", withConfiguration: config), for: .normal)
+            btn.tintColor = .white
+            btn.addAction(UIAction { [weak self] _ in self?.selectPenWidth(width) }, for: .touchUpInside)
+            penWidthStack.addArrangedSubview(btn)
+            penWidthButtons.append(btn)
         }
         
         // arrowStyleStack implementation follows...
@@ -411,11 +452,13 @@ class MarkupToolbar: UIView {
         let isText = (tool == .text)
         let isArrow = (tool == .arrow)
         let isMarker = (tool == .marker)
+        let isPen = (tool == .pen)
         
         // Step 1: Set hidden state IMMEDIATELY (no animation)
         textSizeStackRef?.isHidden = !isText
         arrowStyleStackRef?.isHidden = !isArrow
         markerWidthStackRef?.isHidden = !isMarker
+        penWidthStackRef?.isHidden = !isPen
         
         // Step 2: Force layout update BEFORE reading frame values
         setNeedsLayout()
@@ -429,6 +472,7 @@ class MarkupToolbar: UIView {
             self.textSizeStackRef?.alpha = isText ? 1.0 : 0.0
             self.arrowStyleStackRef?.alpha = isArrow ? 1.0 : 0.0
             self.markerWidthStackRef?.alpha = isMarker ? 1.0 : 0.0
+            self.penWidthStackRef?.alpha = isPen ? 1.0 : 0.0
         }
     }
     
@@ -456,6 +500,14 @@ class MarkupToolbar: UIView {
         updateUI(animated: true)
     }
     
+    func selectPenWidth(_ width: CGFloat, notifyDelegate: Bool = true) {
+        selectedPenWidth = width
+        if notifyDelegate {
+            delegate?.didSelectPenWidth(width)
+        }
+        updateUI(animated: true)
+    }
+    
     @objc private func handleMarkerWidthPan(_ gesture: UIPanGestureRecognizer) {
         guard let stack = gesture.view else { return }
         let location = gesture.location(in: stack)
@@ -470,6 +522,25 @@ class MarkupToolbar: UIView {
         
         if w != selectedMarkerWidth {
             selectMarkerWidth(w)
+            let generator = UISelectionFeedbackGenerator()
+            generator.selectionChanged()
+        }
+    }
+    
+    @objc private func handlePenWidthPan(_ gesture: UIPanGestureRecognizer) {
+        guard let stack = gesture.view else { return }
+        let location = gesture.location(in: stack)
+        let width = stack.bounds.width
+        let count = CGFloat(orderedPenWidths.count)
+        guard width > 0, count > 0 else { return }
+        
+        let segmentWidth = width / count
+        let index = Int(floor(location.x / segmentWidth))
+        let clampedIndex = max(0, min(orderedPenWidths.count - 1, index))
+        let w = orderedPenWidths[clampedIndex]
+        
+        if w != selectedPenWidth {
+            selectPenWidth(w)
             let generator = UISelectionFeedbackGenerator()
             generator.selectionChanged()
         }
@@ -519,11 +590,21 @@ class MarkupToolbar: UIView {
             b.transform = isSelected ? CGAffineTransform(scaleX: 1.1, y: 1.1) : .identity
         }
         
+        // Update Pen Width Buttons
+        for (i, b) in penWidthButtons.enumerated() {
+            guard i < orderedPenWidths.count else { continue }
+            let width = orderedPenWidths[i]
+            let isSelected = (width == selectedPenWidth)
+            b.tintColor = isSelected ? .white : UIColor.white.withAlphaComponent(0.5)
+            b.transform = isSelected ? CGAffineTransform(scaleX: 1.1, y: 1.1) : .identity
+        }
+        
         updateSelectionIndicatorPosition(animated: animated)
         updateColorSelectionIndicatorPosition(animated: animated)
         updateTextSizeIndicatorPosition(animated: animated)
         updateArrowStyleIndicatorPosition(animated: animated)
         updateMarkerWidthIndicatorPosition(animated: animated)
+        updatePenWidthIndicatorPosition(animated: animated)
         
         // Color buttons update
         for btn in colorButtons {
@@ -650,6 +731,26 @@ class MarkupToolbar: UIView {
         let updates = {
             self.markerWidthSelectionIndicator.frame = targetFrame
             self.markerWidthSelectionIndicator.layer.cornerRadius = min(targetFrame.width, targetFrame.height) / 2
+        }
+        
+        if animated {
+            UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0.5, options: [.beginFromCurrentState, .allowUserInteraction], animations: updates)
+        } else {
+            updates()
+        }
+    }
+    
+    private func updatePenWidthIndicatorPosition(animated: Bool) {
+        guard let stack = penWidthStackRef, !stack.isHidden else { return }
+        guard let index = orderedPenWidths.firstIndex(of: selectedPenWidth), index < penWidthButtons.count else { return }
+        
+        let btn = penWidthButtons[index]
+        let targetFrame = btn.frame.insetBy(dx: -4, dy: -4)
+        if targetFrame.width == 0 || targetFrame.height == 0 { return }
+        
+        let updates = {
+            self.penWidthSelectionIndicator.frame = targetFrame
+            self.penWidthSelectionIndicator.layer.cornerRadius = min(targetFrame.width, targetFrame.height) / 2
         }
         
         if animated {

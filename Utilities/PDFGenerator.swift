@@ -29,6 +29,7 @@ class PDFGenerator {
         let overallNote = caseItem.overallNote
         let photos = caseItem.sortedPhotos
         let photoCount = photos.count
+        let showCoverPage = caseItem.showCoverPage
         
         var photoDataList: [(fileName: String, note: String, drawing: Data?, textOverlay: UIImage?)] = []
         for photo in photos {
@@ -43,8 +44,10 @@ class PDFGenerator {
         let pdfData = NSMutableData()
         UIGraphicsBeginPDFContextToData(pdfData, CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight), nil)
         
-        // 表紙
-        drawCoverPage(caseItem: caseItem)
+        // 表紙（showCoverPageがtrueの場合のみ）
+        if showCoverPage {
+            drawCoverPage(caseItem: caseItem)
+        }
         
         // 写真ページ (4枚/ページ)
         let photosPerPage = 4

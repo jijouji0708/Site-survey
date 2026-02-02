@@ -15,6 +15,7 @@ final class Case {
     var overallNote: String = ""
     var address: String = ""
     var area: String = "" // エリア（自由入力）
+    var showCoverPage: Bool = true // 表紙（メモ・詳細）を表示するかどうか
     
     // 詳細情報
     // 曜日: 1=Sun, ..., 7=Sat (Calendar.current.component(.weekday, ...)準拠)

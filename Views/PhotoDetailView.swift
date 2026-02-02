@@ -54,6 +54,7 @@ struct PhotoDetailView: View {
         .background(Color(.systemGray6))
         .navigationTitle("写真詳細")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true) // 標準の戻るジェスチャーを無効化
         // 仕様: 削除確認 アラート表示
         .alert("写真を削除", isPresented: $showDeleteAlert) {
             Button("キャンセル", role: .cancel) {}
@@ -72,6 +73,17 @@ struct PhotoDetailView: View {
             }
         }
         .toolbar {
+            // カスタム戻るボタン
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button(action: { dismiss() }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                        Text("戻る")
+                    }
+                    .foregroundColor(accentGreen)
+                }
+            }
+            
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
                 Button("完了") {
@@ -82,7 +94,7 @@ struct PhotoDetailView: View {
     }
     
     // MARK: - 画像セクション
-    // 仕様: .aspectRatio(contentMode: .fit)、クロップなし
+    // 仕様: .aspectRatio(contentMode: .fit)、クロップなし、ピンチズーム対応
     
     private var imageSection: some View {
         GeometryReader { geometry in
@@ -90,10 +102,11 @@ struct PhotoDetailView: View {
                 Color(.systemGray5)
                 
                 if let image = displayImage {
-                    Image(uiImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: geometry.size.width, maxHeight: geometry.size.height)
+                    ZoomableImageView(
+                        image: image,
+                        onSwipeLeft: { moveToNext() },
+                        onSwipeRight: { moveToPrevious() }
+                    )
                 } else {
                     ProgressView()
                 }
@@ -135,24 +148,6 @@ struct PhotoDetailView: View {
                     }
                 }
             }
-            .gesture(
-                DragGesture()
-                    .onEnded { value in
-                        let horizontalAmount = value.translation.width
-                        let verticalAmount = value.translation.height
-                        
-                        // 主に水平方向の動きであることを確認
-                        if abs(horizontalAmount) > abs(verticalAmount) {
-                            if horizontalAmount < -50 {
-                                // 左スワイプ -> 次へ
-                                moveToNext()
-                            } else if horizontalAmount > 50 {
-                                // 右スワイプ -> 前へ
-                                moveToPrevious()
-                            }
-                        }
-                    }
-            )
         }
     }
     
@@ -187,6 +182,15 @@ struct PhotoDetailView: View {
                 }
         }
         .padding()
+        .gesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { value in
+                    // 右スワイプで案件詳細に戻る
+                    if value.translation.width > 50 && abs(value.translation.height) < abs(value.translation.width) {
+                        dismiss()
+                    }
+                }
+        )
     }
     
     private var noteLineCount: Int {
@@ -252,6 +256,15 @@ struct PhotoDetailView: View {
             }
         }
         .padding()
+        .gesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { value in
+                    // 右スワイプで案件詳細に戻る
+                    if value.translation.width > 50 && abs(value.translation.height) < abs(value.translation.width) {
+                        dismiss()
+                    }
+                }
+        )
     }
     
     // MARK: - アクション

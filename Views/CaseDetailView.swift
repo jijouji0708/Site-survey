@@ -12,6 +12,7 @@ import UIKit
 import UniformTypeIdentifiers
 import VisionKit
 import PencilKit
+import Photos
 
 enum PhotoViewMode {
     case grid
@@ -41,10 +42,11 @@ struct CaseDetailView: View {
     @State private var photoViewMode: PhotoViewMode = .list // 写真表示モード（リストがデフォルト）
     @State private var showMemoLineAlert = false // メモ行数超過アラート
     @FocusState private var focusedPhotoId: UUID? // リスト表示時のフォーカス管理
+    @State private var photoForMarkup: CasePhoto? // 撮影後マークアップ画面への遷移用
     
     // アクセントカラー（緑）- 仕様: Color(red: 0.2, green: 0.78, blue: 0.35)
     private let accentGreen = Color(red: 0.2, green: 0.78, blue: 0.35)
-    private let maxPhotos = 20
+    private let maxPhotos = 50
     
     // 仕様: LazyVGrid、adaptive(minimum: 100, maximum: 140)、spacing: 10
     private let columns = [
@@ -54,19 +56,19 @@ struct CaseDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // 全体メモ
+                // 全体メモ（トグル付き）
                 overallNoteSection
                 
-                // 詳細（曜日・時間）
-                detailsSection
+                // 詳細（曜日・時間）- 表紙表示時のみ
+                if caseItem.showCoverPage {
+                    detailsSection
+                }
                 
                 // 写真ヘッダー: 「写真 N枚」
                 photoHeaderSection
                 
-                // 写真追加ボタン（上限20枚まで）
-                if caseItem.photos.count < maxPhotos {
-                    photoAddSection
-                }
+                // 写真追加ボタン
+                photoAddSection
                 
                 // 写真グリッド
                 photoGridSection
@@ -136,7 +138,7 @@ struct CaseDetailView: View {
         }
         .sheet(isPresented: $showCamera) {
             CameraPicker { image in
-                addPhoto(image)
+                addPhotoFromCamera(image)
             }
         }
         .sheet(isPresented: $showScanner) {
@@ -156,6 +158,12 @@ struct CaseDetailView: View {
                 ShareSheet(activityItems: [url])
             } else if let data = pdfData {
                 ShareSheet(activityItems: [data])
+            }
+        }
+        .fullScreenCover(item: $photoForMarkup) { photo in
+            // 撮影後のマークアップ画面
+            NavigationStack {
+                MarkupLoaderView(photo: photo)
             }
         }
         .onChange(of: selectedPhotoItems) { oldValue, newValue in
@@ -184,17 +192,39 @@ struct CaseDetailView: View {
     
     private var overallNoteSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("メモ")
-                .font(.headline)
-            
-            TextField("メモを入力...", text: $caseItem.overallNote, axis: .vertical)
-                .lineLimit(2...5)
-                .padding(10)
-                .background(Color(.systemGray5))
-                .cornerRadius(8)
-                .onChange(of: caseItem.overallNote) { _, _ in
-                    caseItem.touch()
+            // メモヘッダー（トグル付き）
+            HStack {
+                Text("メモ")
+                    .font(.headline)
+                
+                Spacer()
+                
+                // 表紙非表示時のラベル
+                if !caseItem.showCoverPage {
+                    Text("PDFは写真のみ")
+                        .font(.caption)
+                        .foregroundColor(.orange)
                 }
+                
+                Toggle("", isOn: $caseItem.showCoverPage)
+                    .labelsHidden()
+                    .tint(accentGreen)
+                    .onChange(of: caseItem.showCoverPage) { _, _ in
+                        caseItem.touch()
+                    }
+            }
+            
+            // メモ入力欄（表紙表示時のみ）
+            if caseItem.showCoverPage {
+                TextField("メモを入力...", text: $caseItem.overallNote, axis: .vertical)
+                    .lineLimit(2...5)
+                    .padding(10)
+                    .background(Color(.systemGray5))
+                    .cornerRadius(8)
+                    .onChange(of: caseItem.overallNote) { _, _ in
+                        caseItem.touch()
+                    }
+            }
         }
     }
     
@@ -224,29 +254,48 @@ struct CaseDetailView: View {
     // 仕様: PhotosPicker「追加」+ カメラ「撮影」+ スキャン「スキャン」、systemGray5背景
     
     private var photoAddSection: some View {
-        HStack(spacing: 12) {
-            PhotosPicker(
-                selection: $selectedPhotoItems,
-                maxSelectionCount: maxPhotos - caseItem.photos.count,
-                matching: .images
-            ) {
-                Label("追加", systemImage: "photo.on.rectangle")
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color(.systemGray5))
-                    .cornerRadius(8)
+        let isAtLimit = caseItem.photos.count >= maxPhotos
+        let remainingSlots = maxPhotos - caseItem.photos.count
+        
+        return VStack(spacing: 8) {
+            // 上限到達時のメッセージ
+            if isAtLimit {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text("写真の上限（\(maxPhotos)枚）に達しました")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.vertical, 8)
             }
             
-            // 仕様: カメラ使用前に isSourceTypeAvailable(.camera) で確認
-            if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                Button(action: {
-                    showCamera = true
-                }) {
-                    Label("撮影", systemImage: "camera")
+            HStack(spacing: 12) {
+                PhotosPicker(
+                    selection: $selectedPhotoItems,
+                    maxSelectionCount: max(0, remainingSlots),
+                    matching: .images
+                ) {
+                    Label("追加", systemImage: "photo.on.rectangle")
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
-                        .background(Color(.systemGray5))
+                        .background(isAtLimit ? Color(.systemGray4) : Color(.systemGray5))
                         .cornerRadius(8)
+                }
+                .disabled(isAtLimit)
+                
+                // 仕様: カメラ使用前に isSourceTypeAvailable(.camera) で確認
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    Button(action: {
+                        showCamera = true
+                    }) {
+                        Label("撮影", systemImage: "camera")
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(isAtLimit ? Color(.systemGray4) : Color(.systemGray5))
+                            .cornerRadius(8)
+                    }
+                    .disabled(isAtLimit)
                 }
                 
                 // スキャン機能 (VisionKitが利用可能な場合)
@@ -257,14 +306,15 @@ struct CaseDetailView: View {
                         Label("スキャン", systemImage: "doc.text.viewfinder")
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
-                            .background(Color(.systemGray5))
+                            .background(isAtLimit ? Color(.systemGray4) : Color(.systemGray5))
                             .cornerRadius(8)
                     }
+                    .disabled(isAtLimit)
                 }
             }
+            .foregroundColor(isAtLimit ? .gray : accentGreen)
+            .font(.caption.bold())
         }
-        .foregroundColor(accentGreen)
-        .font(.caption.bold())
     }
     
     // MARK: - 写真グリッドセクション
@@ -632,6 +682,36 @@ struct CaseDetailView: View {
         caseItem.touch()
         
         try? modelContext.save()
+    }
+    
+    /// カメラ撮影後の処理: iOS標準写真アプリに保存し、マークアップ画面へ遷移
+    private func addPhotoFromCamera(_ image: UIImage) {
+        guard let fileName = ImageStorage.shared.saveImage(image) else { return }
+        
+        let photo = CasePhoto(imageFileName: fileName, orderIndex: caseItem.photos.count)
+        photo.parentCase = caseItem
+        caseItem.photos.append(photo)
+        caseItem.touch()
+        
+        try? modelContext.save()
+        
+        // iOS標準写真アプリに保存
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            if status == .authorized || status == .limited {
+                PHPhotoLibrary.shared().performChanges {
+                    PHAssetCreationRequest.creationRequestForAsset(from: image)
+                } completionHandler: { success, error in
+                    if let error = error {
+                        print("写真アプリへの保存エラー: \(error.localizedDescription)")
+                    }
+                }
+            }
+        }
+        
+        // マークアップ画面へ遷移
+        DispatchQueue.main.async {
+            self.photoForMarkup = photo
+        }
     }
     
     private func duplicatePhoto(_ photo: CasePhoto) {
