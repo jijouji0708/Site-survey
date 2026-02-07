@@ -18,6 +18,7 @@ struct PhotoDetailView: View {
     @State private var isRotating = false
     @State private var showDeleteAlert = false
     @State private var showDecomposeAlert = false // 結合解除確認
+    @State private var slideOffset: CGFloat = 0 // スライドアニメーション用
     
     // 仕様: アクセントカラー Color(red: 0.2, green: 0.78, blue: 0.35)
     private let accentGreen = Color(red: 0.2, green: 0.78, blue: 0.35)
@@ -113,8 +114,10 @@ struct PhotoDetailView: View {
                     ZoomableImageView(
                         image: image,
                         onSwipeLeft: { moveToNext() },
-                        onSwipeRight: { moveToPrevious() }
+                        onSwipeRight: { moveToPrevious() },
+                        onSwipeDown: { dismiss() }
                     )
+                    .offset(x: slideOffset)
                 } else {
                     ProgressView()
                 }
@@ -156,6 +159,7 @@ struct PhotoDetailView: View {
                     }
                 }
             }
+            .clipped() // スライドアニメーション時のオーバーフローを隠す
         }
     }
     
@@ -299,22 +303,56 @@ struct PhotoDetailView: View {
         guard let parent = currentPhoto.parentCase,
               let index = parent.sortedPhotos.firstIndex(of: currentPhoto) else { return }
         
+        // ハプティックフィードバック
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        
         // 最初の写真なら最後にループ
         let prevIndex = index > 0 ? index - 1 : parent.sortedPhotos.count - 1
         let prevPhoto = parent.sortedPhotos[prevIndex]
-        currentPhoto = prevPhoto
-        loadImage()
+        
+        // スライドアウトアニメーション（右へ）
+        withAnimation(.easeOut(duration: 0.15)) {
+            slideOffset = UIScreen.main.bounds.width
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            currentPhoto = prevPhoto
+            slideOffset = -UIScreen.main.bounds.width
+            loadImage()
+            
+            // スライドインアニメーション（左から）
+            withAnimation(.easeOut(duration: 0.15)) {
+                slideOffset = 0
+            }
+        }
     }
     
     private func moveToNext() {
         guard let parent = currentPhoto.parentCase,
               let index = parent.sortedPhotos.firstIndex(of: currentPhoto) else { return }
         
+        // ハプティックフィードバック
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        
         // 最後の写真なら最初にループ
         let nextIndex = index < parent.sortedPhotos.count - 1 ? index + 1 : 0
         let nextPhoto = parent.sortedPhotos[nextIndex]
-        currentPhoto = nextPhoto
-        loadImage()
+        
+        // スライドアウトアニメーション（左へ）
+        withAnimation(.easeOut(duration: 0.15)) {
+            slideOffset = -UIScreen.main.bounds.width
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            currentPhoto = nextPhoto
+            slideOffset = UIScreen.main.bounds.width
+            loadImage()
+            
+            // スライドインアニメーション（右から）
+            withAnimation(.easeOut(duration: 0.15)) {
+                slideOffset = 0
+            }
+        }
     }
     
     private func loadImage() {
@@ -337,16 +375,25 @@ struct PhotoDetailView: View {
     private func rotateImage() {
         isRotating = true
         
+        // 回転前の画像サイズを取得
+        let originalImageSize = ImageStorage.shared.loadImage(currentPhoto.imageFileName)?.size ?? .zero
+        
         Task {
             let success = await ImageStorage.shared.rotateImage(currentPhoto.imageFileName)
             
             if success {
-                // マークアップデータをクリア（回転すると座標がずれるため）
-                currentPhoto.markupData = nil
-                currentPhoto.textOverlayData = nil
+                // マークアップを回転変換（クリアではなく変換）
+                currentPhoto.rotateMarkup90Clockwise(originalImageSize: originalImageSize)
                 currentPhoto.parentCase?.touch()
                 
                 try? modelContext.save()
+                
+                // サムネイル更新
+                ImageStorage.shared.updateThumbSync(
+                    currentPhoto.imageFileName,
+                    drawing: currentPhoto.drawing,
+                    textOverlay: currentPhoto.textOverlay
+                )
             }
             
             isRotating = false

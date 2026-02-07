@@ -70,6 +70,45 @@ final class CasePhoto {
         textOverlayData = image?.pngData()
     }
     
+    /// マークアップを90度右回転（画像回転時に呼び出す）
+    /// - Parameter originalImageSize: 回転前の画像サイズ
+    func rotateMarkup90Clockwise(originalImageSize: CGSize) {
+        // 1. PKDrawingの回転
+        if let drawing = drawing {
+            let rotatedDrawing = rotateDrawing90Clockwise(drawing, originalImageSize: originalImageSize)
+            setDrawing(rotatedDrawing)
+        }
+        
+        // 2. アノテーションの回転
+        if let annotations = annotations {
+            self.annotations = annotations.rotated90Clockwise()
+        }
+        
+        // 3. テキストオーバーレイは再生成が必要なためクリア
+        // （アノテーション情報から再描画されるため）
+        textOverlayData = nil
+    }
+    
+    /// PKDrawingを90度右回転
+    private func rotateDrawing90Clockwise(_ drawing: PKDrawing, originalImageSize: CGSize) -> PKDrawing {
+        let width = originalImageSize.width
+        let height = originalImageSize.height
+        
+        // 回転後のサイズ
+        let newSize = CGSize(width: height, height: width)
+        
+        // 90度右回転のアフィン変換を作成
+        // 1. 原点を中心に移動
+        // 2. 90度回転
+        // 3. 新しいサイズに合わせて位置調整
+        var transform = CGAffineTransform.identity
+        transform = transform.translatedBy(x: newSize.width / 2, y: newSize.height / 2)
+        transform = transform.rotated(by: .pi / 2)
+        transform = transform.translatedBy(x: -width / 2, y: -height / 2)
+        
+        return drawing.transformed(using: transform)
+    }
+    
     init(imageFileName: String, orderIndex: Int) {
         self.imageFileName = imageFileName
         self.orderIndex = orderIndex

@@ -12,11 +12,13 @@ struct ZoomableImageView: UIViewRepresentable {
     let image: UIImage
     var onSwipeLeft: (() -> Void)?
     var onSwipeRight: (() -> Void)?
+    var onSwipeDown: (() -> Void)?
     
     func makeUIView(context: Context) -> ZoomableScrollView {
         let scrollView = ZoomableScrollView(image: image)
         scrollView.onSwipeLeft = onSwipeLeft
         scrollView.onSwipeRight = onSwipeRight
+        scrollView.onSwipeDown = onSwipeDown
         return scrollView
     }
     
@@ -24,6 +26,7 @@ struct ZoomableImageView: UIViewRepresentable {
         uiView.updateImage(image)
         uiView.onSwipeLeft = onSwipeLeft
         uiView.onSwipeRight = onSwipeRight
+        uiView.onSwipeDown = onSwipeDown
     }
 }
 
@@ -33,6 +36,7 @@ class ZoomableScrollView: UIScrollView, UIScrollViewDelegate {
     
     var onSwipeLeft: (() -> Void)?
     var onSwipeRight: (() -> Void)?
+    var onSwipeDown: (() -> Void)?
     
     init(image: UIImage) {
         super.init(frame: .zero)
@@ -73,6 +77,10 @@ class ZoomableScrollView: UIScrollView, UIScrollViewDelegate {
         let swipeRight = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipeRight))
         swipeRight.direction = .right
         addGestureRecognizer(swipeRight)
+        
+        let swipeDown = UISwipeGestureRecognizer(target: self, action: #selector(handleSwipeDown))
+        swipeDown.direction = .down
+        addGestureRecognizer(swipeDown)
     }
     
     override func layoutSubviews() {
@@ -143,12 +151,23 @@ class ZoomableScrollView: UIScrollView, UIScrollViewDelegate {
     
     @objc private func handleSwipeLeft() {
         guard zoomScale == 1.0 else { return }
+        // ハプティックフィードバック
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         onSwipeLeft?()
     }
     
     @objc private func handleSwipeRight() {
         guard zoomScale == 1.0 else { return }
+        // ハプティックフィードバック
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         onSwipeRight?()
+    }
+    
+    @objc private func handleSwipeDown() {
+        guard zoomScale == 1.0 else { return }
+        // ハプティックフィードバック
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        onSwipeDown?()
     }
     
     // MARK: - UIScrollViewDelegate

@@ -7,6 +7,15 @@ struct MarkupData: Codable {
     var texts: [TextAnnotationModel] = []
     var arrows: [ArrowAnnotationModel] = []
     var shapes: [ShapeAnnotationModel] = []
+    
+    /// 90度右回転した新しいMarkupDataを返す
+    func rotated90Clockwise() -> MarkupData {
+        return MarkupData(
+            texts: texts.map { $0.rotated90Clockwise() },
+            arrows: arrows.map { $0.rotated90Clockwise() },
+            shapes: shapes.map { $0.rotated90Clockwise() }
+        )
+    }
 }
 
 struct ShapeAnnotationModel: Codable, Identifiable {
@@ -25,6 +34,25 @@ struct ShapeAnnotationModel: Codable, Identifiable {
     var uicolor: UIColor {
         return UIColor(hex: colorHex) ?? .red
     }
+    
+    /// 90度右回転した新しいモデルを返す
+    func rotated90Clockwise() -> ShapeAnnotationModel {
+        // 正規化座標での90度右回転:
+        // 新X = 1 - 旧Y - 旧Height
+        // 新Y = 旧X
+        // 新Width = 旧Height
+        // 新Height = 旧Width
+        return ShapeAnnotationModel(
+            id: id,
+            type: type,
+            x: 1 - y - height,
+            y: x,
+            width: height,
+            height: width,
+            colorHex: colorHex,
+            lineWidth: lineWidth
+        )
+    }
 }
 
 struct TextAnnotationModel: Codable, Identifiable {
@@ -42,6 +70,20 @@ struct TextAnnotationModel: Codable, Identifiable {
     
     var uicolor: UIColor {
         return UIColor(hex: colorHex) ?? .black
+    }
+    
+    /// 90度右回転した新しいモデルを返す
+    func rotated90Clockwise() -> TextAnnotationModel {
+        return TextAnnotationModel(
+            id: id,
+            text: text,
+            fontSize: fontSize,
+            x: 1 - y - height,
+            y: x,
+            width: height,
+            height: width,
+            colorHex: colorHex
+        )
     }
 }
 
@@ -66,6 +108,21 @@ struct ArrowAnnotationModel: Codable, Identifiable {
     
     var uicolor: UIColor {
         return UIColor(hex: colorHex) ?? .red
+    }
+    
+    /// 90度右回転した新しいモデルを返す
+    func rotated90Clockwise() -> ArrowAnnotationModel {
+        // 点の回転: 新X = 1 - 旧Y, 新Y = 旧X
+        return ArrowAnnotationModel(
+            id: id,
+            startX: 1 - startY,
+            startY: startX,
+            endX: 1 - endY,
+            endY: endX,
+            colorHex: colorHex,
+            lineWidth: lineWidth,
+            style: style
+        )
     }
 }
 
@@ -118,8 +175,9 @@ extension UIColor {
 
 // MARK: - Benchmark Colors
 struct MarkupColors {
-    static let white = UIColor(red: 1, green: 1, blue: 1, alpha: 1)
-    static let black = UIColor(red: 0, green: 0, blue: 0, alpha: 1)
+    // 白と黒はPencilKitの自動反転を回避するためわずかにオフセット
+    static let white = UIColor(red: 0.999, green: 0.999, blue: 0.999, alpha: 1)
+    static let black = UIColor(red: 0.001, green: 0.001, blue: 0.001, alpha: 1)
     static let gray = UIColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1)
     static let red = UIColor(red: 1, green: 0.23, blue: 0.19, alpha: 1)
     static let blue = UIColor(red: 0, green: 0.48, blue: 1, alpha: 1)

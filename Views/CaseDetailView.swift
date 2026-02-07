@@ -39,6 +39,7 @@ struct CaseDetailView: View {
     @State private var isDetailsExpanded = false // 詳細セクションの開閉状態
     
     @State private var draggingPhoto: CasePhoto? // ドラッグ中の写真を追跡
+    @State private var dropTargetPhotoId: UUID? // ドロップターゲットのハイライト用
     @State private var photoViewMode: PhotoViewMode = .list // 写真表示モード（リストがデフォルト）
     @State private var showMemoLineAlert = false // メモ行数超過アラート
     @FocusState private var focusedPhotoId: UUID? // リスト表示時のフォーカス管理
@@ -455,8 +456,19 @@ struct CaseDetailView: View {
                         togglePhotoSelection(photo)
                     }
                 }
+                // ドラッグ中のビジュアルフィードバック
+                .scaleEffect(draggingPhoto?.id == photo.id ? 1.05 : 1.0)
+                .opacity(draggingPhoto?.id == photo.id ? 0.7 : 1.0)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(dropTargetPhotoId == photo.id ? accentGreen : .clear, lineWidth: 3)
+                )
+                .animation(.easeInOut(duration: 0.15), value: draggingPhoto?.id)
+                .animation(.easeInOut(duration: 0.15), value: dropTargetPhotoId)
                 .onDrag {
                     guard !isComposeMode else { return NSItemProvider() }
+                    // ハプティックフィードバック
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     self.draggingPhoto = photo
                     return NSItemProvider(object: photo.id.uuidString as NSString)
                 }
@@ -464,7 +476,13 @@ struct CaseDetailView: View {
                     photo: photo,
                     caseItem: caseItem,
                     draggingPhoto: draggingPhoto,
-                    modelContext: modelContext
+                    modelContext: modelContext,
+                    dropTargetPhotoId: $dropTargetPhotoId,
+                    onDropComplete: {
+                        // ドラッグ終了時のハプティックフィードバック
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                        draggingPhoto = nil
+                    }
                 ))
             }
         }
@@ -562,8 +580,19 @@ struct CaseDetailView: View {
                     }
                 }
                 .padding(.vertical, 4)
+                // ドラッグ中のビジュアルフィードバック
+                .scaleEffect(draggingPhoto?.id == photo.id ? 1.02 : 1.0)
+                .opacity(draggingPhoto?.id == photo.id ? 0.7 : 1.0)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(dropTargetPhotoId == photo.id ? accentGreen : .clear, lineWidth: 2)
+                )
+                .animation(.easeInOut(duration: 0.15), value: draggingPhoto?.id)
+                .animation(.easeInOut(duration: 0.15), value: dropTargetPhotoId)
                 .onDrag {
                     guard !isComposeMode else { return NSItemProvider() }
+                    // ハプティックフィードバック
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     self.draggingPhoto = photo
                     return NSItemProvider(object: photo.id.uuidString as NSString)
                 }
@@ -571,7 +600,13 @@ struct CaseDetailView: View {
                     photo: photo,
                     caseItem: caseItem,
                     draggingPhoto: draggingPhoto,
-                    modelContext: modelContext
+                    modelContext: modelContext,
+                    dropTargetPhotoId: $dropTargetPhotoId,
+                    onDropComplete: {
+                        // ドラッグ終了時のハプティックフィードバック
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                        draggingPhoto = nil
+                    }
                 ))
             }
         }
@@ -1000,8 +1035,15 @@ struct PhotoDropDelegate: DropDelegate {
     let caseItem: Case
     let draggingPhoto: CasePhoto?
     let modelContext: ModelContext
+    @Binding var dropTargetPhotoId: UUID?
+    var onDropComplete: (() -> Void)?
     
     func performDrop(info: DropInfo) -> Bool {
+        // ドロップ完了時にハイライトをクリアしてコールバックを呼び出す
+        DispatchQueue.main.async {
+            dropTargetPhotoId = nil
+            onDropComplete?()
+        }
         return true
     }
     
@@ -1011,7 +1053,14 @@ struct PhotoDropDelegate: DropDelegate {
     
     func dropEntered(info: DropInfo) {
         guard let draggingPhoto = draggingPhoto else { return }
-        guard draggingPhoto != photo else { return }
+        guard draggingPhoto != photo else {
+            // ドラッグ元と同じ場所ではハイライトしない
+            dropTargetPhotoId = nil
+            return
+        }
+        
+        // ドロップターゲットをハイライト
+        dropTargetPhotoId = photo.id
         
         // Use sortedPhotos to get the visual index
         var sorted = caseItem.sortedPhotos
@@ -1037,6 +1086,13 @@ struct PhotoDropDelegate: DropDelegate {
                 // Note: We don't need to mutate caseItem.photos array order itself 
                 // because sorting relies on orderIndex.
             }
+        }
+    }
+    
+    func dropExited(info: DropInfo) {
+        // ドロップエリアから離れたらハイライトをクリア
+        if dropTargetPhotoId == photo.id {
+            dropTargetPhotoId = nil
         }
     }
 }

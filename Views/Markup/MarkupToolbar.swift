@@ -134,6 +134,10 @@ class MarkupToolbar: UIView {
         arrowStyleStack.addSubview(arrowStyleSelectionIndicator)
         arrowStyleStack.sendSubviewToBack(arrowStyleSelectionIndicator)
         
+        // Add Pan Gesture for Arrow Style
+        let arrowPan = UIPanGestureRecognizer(target: self, action: #selector(handleArrowStylePan(_:)))
+        arrowStyleStack.addGestureRecognizer(arrowPan)
+        
         // Marker Width Stack
         let markerWidthStack = UIStackView()
         markerWidthStack.axis = .horizontal
