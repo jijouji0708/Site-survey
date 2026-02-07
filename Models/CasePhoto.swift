@@ -27,6 +27,12 @@ final class CasePhoto {
     // 後方互換性のため残すが、基本は使用しない（またはサムネイル生成用に使用）
     var textOverlayData: Data?
     
+    // 結合写真フラグ
+    var isComposite: Bool = false
+    
+    // 結合元の画像ファイル名（解除時に復元用）
+    var sourceImageFileNames: [String]? = nil
+    
     var parentCase: Case?
     
     // PKDrawing アクセサ

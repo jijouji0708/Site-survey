@@ -442,6 +442,12 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     let overlayView = MarkupOverlayView() // Hosts BaseAnnotationView
     let toolbar = MarkupToolbar()
     
+    // Toast Notification
+    private let toastContainer = UIView()
+    private let toastLabel = UILabel()
+    private let toastColorView = UIView()
+    private var toastHideTimer: Timer?
+    
     // Logic
     private let toolPicker = PKToolPicker()
     private var currentTool: MarkupTool = .arrow
@@ -536,6 +542,9 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         // Fix: Allow 1-finger drawing (Overlay/Canvas) but require 2 fingers for scrolling
         scrollView.panGestureRecognizer.minimumNumberOfTouches = 2
         scrollView.delaysContentTouches = false
+        
+        // Setup Toast Notification
+        setupToast()
     }
     
     func setupCanvas() {
@@ -557,6 +566,119 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         pan.maximumNumberOfTouches = 1
         pan.delegate = self // Allow concurrent recognition
         overlayView.addGestureRecognizer(pan)
+    }
+    
+    // MARK: - Toast Notification
+    
+    private func setupToast() {
+        // Container - Fixed width to prevent layout shift
+        toastContainer.backgroundColor = UIColor.black.withAlphaComponent(0.85)
+        toastContainer.layer.cornerRadius = 16
+        toastContainer.alpha = 0
+        toastContainer.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(toastContainer)
+        
+        // Label (left side, fixed width area for tool name)
+        toastLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        toastLabel.textColor = .white
+        toastLabel.textAlignment = .center
+        toastLabel.translatesAutoresizingMaskIntoConstraints = false
+        toastContainer.addSubview(toastLabel)
+        
+        // Color indicator (right side, fixed position)
+        toastColorView.layer.cornerRadius = 10
+        toastColorView.layer.borderWidth = 1.5
+        toastColorView.layer.borderColor = UIColor.white.withAlphaComponent(0.5).cgColor
+        toastColorView.translatesAutoresizingMaskIntoConstraints = false
+        toastContainer.addSubview(toastColorView)
+        
+        NSLayoutConstraint.activate([
+            toastContainer.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            toastContainer.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
+            toastContainer.heightAnchor.constraint(equalToConstant: 44),
+            toastContainer.widthAnchor.constraint(equalToConstant: 130), // Fixed width
+            
+            // Label centered in container, leaving space for color view
+            toastLabel.leadingAnchor.constraint(equalTo: toastContainer.leadingAnchor, constant: 12),
+            toastLabel.trailingAnchor.constraint(equalTo: toastColorView.leadingAnchor, constant: -8),
+            toastLabel.centerYAnchor.constraint(equalTo: toastContainer.centerYAnchor),
+            
+            // Color indicator at fixed right position
+            toastColorView.trailingAnchor.constraint(equalTo: toastContainer.trailingAnchor, constant: -12),
+            toastColorView.centerYAnchor.constraint(equalTo: toastContainer.centerYAnchor),
+            toastColorView.widthAnchor.constraint(equalToConstant: 20),
+            toastColorView.heightAnchor.constraint(equalToConstant: 20)
+        ])
+    }
+    
+    private func showToast(tool: MarkupTool, color: UIColor) {
+        // Cancel previous timer
+        toastHideTimer?.invalidate()
+        
+        // Tool name
+        let toolName: String
+        switch tool {
+        case .pen: toolName = "ペン"
+        case .marker: toolName = "マーカー"
+        case .eraser: toolName = "消しゴム"
+        case .text: toolName = "テキスト"
+        case .arrow: toolName = "矢印"
+        case .rect: toolName = "四角形"
+        case .circle: toolName = "円"
+        }
+        
+        // Set tool name only (no color text)
+        toastLabel.text = toolName
+        
+        // Hide color indicator for eraser (no color needed)
+        let showColor = (tool != .eraser)
+        toastColorView.isHidden = !showColor
+        
+        if showColor {
+            toastColorView.backgroundColor = color
+            
+            // Special border for white/black
+            if color == MarkupColors.white {
+                toastColorView.layer.borderColor = UIColor.gray.cgColor
+            } else if color == MarkupColors.black {
+                toastColorView.layer.borderColor = UIColor.darkGray.cgColor
+            } else {
+                toastColorView.layer.borderColor = UIColor.white.withAlphaComponent(0.5).cgColor
+            }
+        }
+        
+        // Bring to front
+        view.bringSubviewToFront(toastContainer)
+        
+        // Animate in
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+            self.toastContainer.alpha = 1
+            self.toastContainer.transform = .identity
+        }
+        
+        // Schedule hide
+        toastHideTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { [weak self] _ in
+            self?.hideToast()
+        }
+    }
+    
+    private func hideToast() {
+        UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseIn, .beginFromCurrentState]) {
+            self.toastContainer.alpha = 0
+        }
+    }
+    
+    private func getColorName(_ color: UIColor) -> String {
+        switch color.toHex() {
+        case MarkupColors.white.toHex(): return "白"
+        case MarkupColors.black.toHex(): return "黒"
+        case MarkupColors.gray.toHex(): return "グレー"
+        case MarkupColors.red.toHex(): return "赤"
+        case MarkupColors.blue.toHex(): return "青"
+        case MarkupColors.yellow.toHex(): return "黄"
+        case MarkupColors.green.toHex(): return "緑"
+        default: return "カスタム"
+        }
     }
     
     // MARK: - Public Methods
@@ -1297,6 +1419,9 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         if activeTextView != nil { endEditingText() }
         setTool(tool)
         
+        // Show toast notification
+        showToast(tool: tool, color: currentColor)
+        
         // Animate layout changes if toolbar resizes
         UIView.animate(withDuration: 0.3) {
             self.view.layoutIfNeeded()
@@ -1308,6 +1433,9 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         let previouslySelected = selectedAnnotation
         
         setColor(color)
+        
+        // Show toast notification
+        showToast(tool: currentTool, color: color)
         
         // Restore selection and update color
         if let selected = previouslySelected {

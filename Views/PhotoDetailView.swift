@@ -17,6 +17,7 @@ struct PhotoDetailView: View {
     @State private var displayImage: UIImage?
     @State private var isRotating = false
     @State private var showDeleteAlert = false
+    @State private var showDecomposeAlert = false // 結合解除確認
     
     // 仕様: アクセントカラー Color(red: 0.2, green: 0.78, blue: 0.35)
     private let accentGreen = Color(red: 0.2, green: 0.78, blue: 0.35)
@@ -55,7 +56,6 @@ struct PhotoDetailView: View {
         .navigationTitle("写真詳細")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true) // 標準の戻るジェスチャーを無効化
-        // 仕様: 削除確認 アラート表示
         .alert("写真を削除", isPresented: $showDeleteAlert) {
             Button("キャンセル", role: .cancel) {}
             Button("削除", role: .destructive) {
@@ -63,6 +63,14 @@ struct PhotoDetailView: View {
             }
         } message: {
             Text("この写真を削除してもよろしいですか？")
+        }
+        .alert("結合を解除", isPresented: $showDecomposeAlert) {
+            Button("キャンセル", role: .cancel) {}
+            Button("解除", role: .destructive) {
+                decomposePhoto()
+            }
+        } message: {
+            Text("結合を解除して元の写真に戻します。\nマークアップはリセットされます。")
         }
         .onAppear {
             loadImage()
@@ -221,41 +229,59 @@ struct PhotoDetailView: View {
     // 仕様: マークアップ（オレンジ）+ 回転（緑）+ 削除（赤）
     
     private var actionButtons: some View {
-        HStack(spacing: 16) {
-            NavigationLink(destination: MarkupLoaderView(photo: currentPhoto)) {
-                Label("マーク", systemImage: "pencil.tip.crop.circle")
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.orange)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
+        VStack(spacing: 12) {
+            // 結合写真の場合は解除ボタンを表示
+            if currentPhoto.isComposite {
+                Button(action: {
+                    showDecomposeAlert = true
+                }) {
+                    Label("結合解除", systemImage: "rectangle.2.swap")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.purple)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                }
+                .padding(.horizontal)
             }
             
-            // 回転ボタン（緑）
-            // 仕様: 90度右回転、非同期処理
-            Button(action: rotateImage) {
-                Label("回転", systemImage: "rotate.right")
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(accentGreen)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
+            HStack(spacing: 16) {
+                NavigationLink(destination: MarkupLoaderView(photo: currentPhoto)) {
+                    Label("マーク", systemImage: "pencil.tip.crop.circle")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.orange)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                }
+                
+                // 回転ボタン（緑）
+                // 仕様: 90度右回転、非同期処理
+                Button(action: rotateImage) {
+                    Label("回転", systemImage: "rotate.right")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(accentGreen)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                }
+                .disabled(isRotating)
+                
+                // 削除ボタン（赤）
+                Button(action: {
+                    showDeleteAlert = true
+                }) {
+                    Label("削除", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.red)
+                        .foregroundColor(.white)
+                        .cornerRadius(8)
+                }
             }
-            .disabled(isRotating)
-            
-            // 削除ボタン（赤）
-            Button(action: {
-                showDeleteAlert = true
-            }) {
-                Label("削除", systemImage: "trash")
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.red)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-            }
+            .padding(.horizontal)
         }
-        .padding()
+        .padding(.vertical)
         .gesture(
             DragGesture(minimumDistance: 30)
                 .onEnded { value in
@@ -338,6 +364,36 @@ struct PhotoDetailView: View {
             caseItem.normalizePhotoOrder()
             caseItem.touch()
         }
+        
+        modelContext.delete(currentPhoto)
+        try? modelContext.save()
+        
+        dismiss()
+    }
+    
+    private func decomposePhoto() {
+        guard currentPhoto.isComposite,
+              let sourceFileNames = currentPhoto.sourceImageFileNames,
+              let caseItem = currentPhoto.parentCase else { return }
+        
+        // 結合写真の位置を取得
+        let insertIndex = currentPhoto.orderIndex
+        
+        // 元写真をCasePhotoとして復元
+        for (offset, fileName) in sourceFileNames.enumerated() {
+            let restoredPhoto = CasePhoto(imageFileName: fileName, orderIndex: insertIndex + offset)
+            restoredPhoto.parentCase = caseItem
+            caseItem.photos.append(restoredPhoto)
+        }
+        
+        // 結合写真を削除（結合画像ファイルも削除）
+        ImageStorage.shared.deleteImage(currentPhoto.imageFileName)
+        if let index = caseItem.photos.firstIndex(of: currentPhoto) {
+            caseItem.photos.remove(at: index)
+        }
+        
+        caseItem.normalizePhotoOrder()
+        caseItem.touch()
         
         modelContext.delete(currentPhoto)
         try? modelContext.save()

@@ -24,8 +24,6 @@ class PDFGenerator {
     
     func generatePDF(for caseItem: Case) async -> Data? {
         let title = caseItem.title
-        let createdAt = caseItem.createdAt
-        let updatedAt = caseItem.updatedAt
         let overallNote = caseItem.overallNote
         let photos = caseItem.sortedPhotos
         let photoCount = photos.count
@@ -79,8 +77,6 @@ class PDFGenerator {
         guard let context = UIGraphicsGetCurrentContext() else { return }
         
         let title = caseItem.title
-        let createdAt = caseItem.createdAt
-        let updatedAt = caseItem.updatedAt
         let overallNote = caseItem.overallNote
         let photoCount = caseItem.sortedPhotos.count
         
@@ -99,14 +95,11 @@ class PDFGenerator {
         let titleY: CGFloat = 80
         (title as NSString).draw(in: CGRect(x: margin, y: titleY, width: pageWidth - margin*2, height: 80), withAttributes: mainTitleAttr)
         
-        // 情報エリア（横並びコンパクト）
+        // 情報エリア（写真枚数のみ）
         let infoY: CGFloat = titleY + 60
-        let infoFont = UIFont.systemFont(ofSize: 11)
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy/MM/dd HH:mm"
+        let infoFont = UIFont.systemFont(ofSize: 12)
         
-        // 作成・更新・枚数を横並びに
-        let infoText = "作成: \(dateFormatter.string(from: createdAt))　　更新: \(dateFormatter.string(from: updatedAt))　　写真: \(photoCount)枚"
+        let infoText = "写真: \(photoCount)枚"
         let infoAttr: [NSAttributedString.Key: Any] = [
             .font: infoFont,
             .foregroundColor: textLight

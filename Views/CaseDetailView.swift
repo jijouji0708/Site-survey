@@ -44,6 +44,11 @@ struct CaseDetailView: View {
     @FocusState private var focusedPhotoId: UUID? // リスト表示時のフォーカス管理
     @State private var photoForMarkup: CasePhoto? // 撮影後マークアップ画面への遷移用
     
+    // 写真結合モード
+    @State private var isComposeMode = false
+    @State private var selectedPhotosForCompose: Set<UUID> = []
+    @State private var showComposeConfirmAlert = false
+    
     // アクセントカラー（緑）- 仕様: Color(red: 0.2, green: 0.78, blue: 0.35)
     private let accentGreen = Color(red: 0.2, green: 0.78, blue: 0.35)
     private let maxPhotos = 50
@@ -77,10 +82,18 @@ struct CaseDetailView: View {
         }
         // 仕様: 背景 Color(.systemGray6)
         .background(Color(.systemGray6))
-        // 仕様: ナビゲーションタイトル 編集可能（$caseItem.title）
-        .navigationTitle($caseItem.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // カスタムタイトル（直接編集可能）
+            ToolbarItem(placement: .principal) {
+                TextField("案件名", text: $caseItem.title)
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                    .textFieldStyle(.plain)
+                    .onChange(of: caseItem.title) { _, _ in
+                        caseItem.touch()
+                    }
+            }
             // 仕様: ツールバー右上 square.and.arrow.up
             ToolbarItem(placement: .navigationBarTrailing) {
                 HStack {
@@ -185,6 +198,14 @@ struct CaseDetailView: View {
         } message: {
             Text("この写真を削除してもよろしいですか？")
         }
+        .alert("写真を結合", isPresented: $showComposeConfirmAlert) {
+            Button("キャンセル", role: .cancel) {}
+            Button("結合", role: .destructive) {
+                composePhotos()
+            }
+        } message: {
+            Text("\(selectedPhotosForCompose.count)枚の写真を1枚に結合します。元の写真は削除されます。")
+        }
     }
     
     // MARK: - 全体メモセクション
@@ -233,19 +254,59 @@ struct CaseDetailView: View {
     
     private var photoHeaderSection: some View {
         HStack {
-            Text("写真 \(caseItem.photos.count)枚")
-                .font(.headline)
-            
-            Spacer()
-            
-            // 表示モード切り替えボタン
-            Button(action: {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    photoViewMode = (photoViewMode == .grid) ? .list : .grid
-                }
-            }) {
-                Image(systemName: photoViewMode == .grid ? "list.bullet" : "square.grid.2x2")
+            if isComposeMode {
+                // 結合モード時のヘッダー
+                Text("結合する写真を選択 (\(selectedPhotosForCompose.count)/4)")
+                    .font(.headline)
                     .foregroundColor(accentGreen)
+                
+                Spacer()
+                
+                // キャンセルボタン
+                Button("キャンセル") {
+                    withAnimation {
+                        isComposeMode = false
+                        selectedPhotosForCompose.removeAll()
+                    }
+                }
+                .foregroundColor(.secondary)
+                
+                // 結合実行ボタン
+                Button("結合") {
+                    showComposeConfirmAlert = true
+                }
+                .foregroundColor(selectedPhotosForCompose.count >= 2 ? accentGreen : .gray)
+                .fontWeight(.bold)
+                .disabled(selectedPhotosForCompose.count < 2)
+            } else {
+                // 通常モード
+                Text("写真 \(caseItem.photos.count)枚")
+                    .font(.headline)
+                
+                Spacer()
+                
+                // 結合ボタン（2枚以上あれば表示）
+                if caseItem.photos.count >= 2 {
+                    Button(action: {
+                        withAnimation {
+                            isComposeMode = true
+                            selectedPhotosForCompose.removeAll()
+                        }
+                    }) {
+                        Image(systemName: "rectangle.on.rectangle")
+                            .foregroundColor(accentGreen)
+                    }
+                }
+                
+                // 表示モード切り替えボタン
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        photoViewMode = (photoViewMode == .grid) ? .list : .grid
+                    }
+                }) {
+                    Image(systemName: photoViewMode == .grid ? "list.bullet" : "square.grid.2x2")
+                        .foregroundColor(accentGreen)
+                }
             }
         }
     }
@@ -346,18 +407,56 @@ struct CaseDetailView: View {
         
         return LazyVGrid(columns: columns, spacing: 10) {
             ForEach(caseItem.sortedPhotos) { photo in
-                PhotoThumbView(
-                    photo: photo,
-                    index: (caseItem.sortedPhotos.firstIndex(of: photo) ?? 0) + 1,
-                    isReordering: false,
-                    updateTrigger: thumbUpdateTrigger,
-                    onDuplicate: { duplicatePhoto(photo) },
-                    onDelete: {
-                        photoToDelete = photo
-                        showDeleteAlert = true
+                ZStack {
+                    PhotoThumbView(
+                        photo: photo,
+                        index: (caseItem.sortedPhotos.firstIndex(of: photo) ?? 0) + 1,
+                        isReordering: false,
+                        updateTrigger: thumbUpdateTrigger,
+                        onDuplicate: { duplicatePhoto(photo) },
+                        onDelete: {
+                            photoToDelete = photo
+                            showDeleteAlert = true
+                        }
+                    )
+                    
+                    // 結合モード時のオーバーレイ
+                    if isComposeMode {
+                        let isSelected = selectedPhotosForCompose.contains(photo.id)
+                        
+                        // 選択状態オーバーレイ
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(isSelected ? accentGreen.opacity(0.3) : Color.black.opacity(0.2))
+                        
+                        // チェックマーク
+                        VStack {
+                            HStack {
+                                Spacer()
+                                ZStack {
+                                    Circle()
+                                        .fill(isSelected ? accentGreen : Color.white.opacity(0.8))
+                                        .frame(width: 24, height: 24)
+                                    
+                                    if isSelected {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 12, weight: .bold))
+                                            .foregroundColor(.white)
+                                    }
+                                }
+                                .padding(6)
+                            }
+                            Spacer()
+                        }
                     }
-                )
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if isComposeMode {
+                        togglePhotoSelection(photo)
+                    }
+                }
                 .onDrag {
+                    guard !isComposeMode else { return NSItemProvider() }
                     self.draggingPhoto = photo
                     return NSItemProvider(object: photo.id.uuidString as NSString)
                 }
@@ -382,51 +481,89 @@ struct CaseDetailView: View {
             ForEach(Array(sortedPhotos.enumerated()), id: \.element.id) { index, photo in
                 HStack(alignment: .top, spacing: 12) {
                     // 写真サムネイル（PhotoThumbViewを使用、動的サイズ）
-                    PhotoThumbView(
-                        photo: photo,
-                        index: index + 1,
-                        isReordering: false,
-                        updateTrigger: thumbUpdateTrigger,
-                        onDuplicate: { duplicatePhoto(photo) },
-                        onDelete: {
-                            photoToDelete = photo
-                            showDeleteAlert = true
-                        }
-                    )
-                    .frame(width: thumbnailSize, height: thumbnailSize)
-                    
-                    // メモ入力欄（6行超過分は赤で表示）
-                    VStack(alignment: .leading, spacing: 2) {
-                        TextField("メモを入力...", text: Binding(
-                            get: { photo.note },
-                            set: { newValue in
-                                photo.note = newValue
-                                caseItem.touch()
+                    ZStack {
+                        PhotoThumbView(
+                            photo: photo,
+                            index: index + 1,
+                            isReordering: false,
+                            updateTrigger: thumbUpdateTrigger,
+                            onDuplicate: { duplicatePhoto(photo) },
+                            onDelete: {
+                                photoToDelete = photo
+                                showDeleteAlert = true
                             }
-                        ), axis: .vertical)
-                        .lineLimit(6)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.caption)
-                        .focused($focusedPhotoId, equals: photo.id)
+                        )
                         
-                        // 6行を超えている場合、超過分を赤で表示
-                        let lines = photo.note.components(separatedBy: "\n")
-                        if lines.count > 6 {
-                            let overflowLines = Array(lines.dropFirst(6))
-                            Text(overflowLines.joined(separator: "\n"))
-                                .font(.caption)
-                                .foregroundColor(.red)
-                                .lineLimit(nil)
+                        // 結合モード時のオーバーレイ
+                        if isComposeMode {
+                            let isSelected = selectedPhotosForCompose.contains(photo.id)
                             
-                            Text("※7行目以降はPDFに表示されません")
-                                .font(.caption2)
-                                .foregroundColor(.red)
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(isSelected ? accentGreen.opacity(0.3) : Color.black.opacity(0.2))
+                            
+                            VStack {
+                                HStack {
+                                    Spacer()
+                                    ZStack {
+                                        Circle()
+                                            .fill(isSelected ? accentGreen : Color.white.opacity(0.8))
+                                            .frame(width: 24, height: 24)
+                                        
+                                        if isSelected {
+                                            Image(systemName: "checkmark")
+                                                .font(.system(size: 12, weight: .bold))
+                                                .foregroundColor(.white)
+                                        }
+                                    }
+                                    .padding(6)
+                                }
+                                Spacer()
+                            }
                         }
                     }
-                    .frame(minHeight: thumbnailSize, alignment: .topLeading)
+                    .frame(width: thumbnailSize, height: thumbnailSize)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if isComposeMode {
+                            togglePhotoSelection(photo)
+                        }
+                    }
+                    
+                    // メモ入力欄（結合モード時は非表示）
+                    if !isComposeMode {
+                        VStack(alignment: .leading, spacing: 2) {
+                            TextField("メモを入力...", text: Binding(
+                                get: { photo.note },
+                                set: { newValue in
+                                    photo.note = newValue
+                                    caseItem.touch()
+                                }
+                            ), axis: .vertical)
+                            .lineLimit(6)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption)
+                            .focused($focusedPhotoId, equals: photo.id)
+                            
+                            // 6行を超えている場合、超過分を赤で表示
+                            let lines = photo.note.components(separatedBy: "\n")
+                            if lines.count > 6 {
+                                let overflowLines = Array(lines.dropFirst(6))
+                                Text(overflowLines.joined(separator: "\n"))
+                                    .font(.caption)
+                                    .foregroundColor(.red)
+                                    .lineLimit(nil)
+                                
+                                Text("※7行目以降はPDFに表示されません")
+                                    .font(.caption2)
+                                    .foregroundColor(.red)
+                            }
+                        }
+                        .frame(minHeight: thumbnailSize, alignment: .topLeading)
+                    }
                 }
                 .padding(.vertical, 4)
                 .onDrag {
+                    guard !isComposeMode else { return NSItemProvider() }
                     self.draggingPhoto = photo
                     return NSItemProvider(object: photo.id.uuidString as NSString)
                 }
@@ -761,6 +898,58 @@ struct CaseDetailView: View {
         try? modelContext.save()
     }
     
+    // MARK: - 写真結合
+    
+    private func togglePhotoSelection(_ photo: CasePhoto) {
+        if selectedPhotosForCompose.contains(photo.id) {
+            selectedPhotosForCompose.remove(photo.id)
+        } else if selectedPhotosForCompose.count < 4 {
+            selectedPhotosForCompose.insert(photo.id)
+        }
+    }
+    
+    private func composePhotos() {
+        // 選択された写真をorderIndex順で取得
+        let selectedPhotos = caseItem.sortedPhotos.filter { selectedPhotosForCompose.contains($0.id) }
+        guard selectedPhotos.count >= 2 else { return }
+        
+        // 元画像のファイル名リスト
+        let sourceFileNames = selectedPhotos.map { $0.imageFileName }
+        
+        // 結合画像を生成
+        guard let compositeFileName = ImageStorage.shared.composeImages(sourceFileNames) else { return }
+        
+        // 最初に選択された写真のインデックスを取得
+        let insertIndex = selectedPhotos.first?.orderIndex ?? caseItem.photos.count
+        
+        // 新しい結合写真を作成
+        let compositePhoto = CasePhoto(imageFileName: compositeFileName, orderIndex: insertIndex)
+        compositePhoto.isComposite = true
+        compositePhoto.sourceImageFileNames = sourceFileNames
+        compositePhoto.parentCase = caseItem
+        
+        // 元写真を削除（ファイルは保持、CasePhotoレコードのみ削除）
+        for photo in selectedPhotos {
+            if let index = caseItem.photos.firstIndex(of: photo) {
+                caseItem.photos.remove(at: index)
+            }
+            // ファイルは削除しない（解除時に復元するため）
+        }
+        
+        // 結合写真を追加
+        caseItem.photos.append(compositePhoto)
+        caseItem.normalizePhotoOrder()
+        caseItem.touch()
+        
+        try? modelContext.save()
+        
+        // モード終了
+        withAnimation {
+            isComposeMode = false
+            selectedPhotosForCompose.removeAll()
+        }
+    }
+    
     // 仕様: PDF生成 Task.detached を使用
     private func generatePDF(forPreview: Bool) {
         isGeneratingPDF = true
@@ -870,9 +1059,10 @@ struct PhotoThumbView: View {
     var body: some View {
         GeometryReader { geometry in
             let size = min(geometry.size.width, geometry.size.height)
-            let buttonSize: CGFloat = max(20, size * 0.22) // ボタンサイズを相対的に計算
-            let badgeSize: CGFloat = max(18, size * 0.2) // バッジサイズを相対的に計算
-            let padding: CGFloat = max(3, size * 0.05)
+            // ボタン3つが確実に収まるよう調整: 3*buttonSize + 2*spacing + 2*padding < size
+            let buttonSize: CGFloat = min(28, max(18, size * 0.18))
+            let badgeSize: CGFloat = max(16, size * 0.18)
+            let padding: CGFloat = max(3, size * 0.04)
             
             NavigationLink(destination: PhotoDetailView(photo: photo)) {
                 ZStack(alignment: .topLeading) {
@@ -904,10 +1094,10 @@ struct PhotoThumbView: View {
                     }
                     .padding(padding)
                     
-                    // 操作ボタン
+                    // 操作ボタン（写真内に収まるよう調整）
                     VStack {
                         Spacer()
-                        HStack(spacing: padding * 0.8) {
+                        HStack(spacing: padding) {
                             // マークアップボタン（オレンジ）
                             NavigationLink(destination: MarkupLoaderView(photo: photo)) {
                                 Image(systemName: "pencil.tip.crop.circle")
@@ -940,7 +1130,8 @@ struct PhotoThumbView: View {
                                     .clipShape(Circle())
                             }
                         }
-                        .padding(padding)
+                        .padding(.horizontal, padding)
+                        .padding(.bottom, padding)
                     }
                 }
                 .frame(width: size, height: size)

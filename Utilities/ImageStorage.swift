@@ -264,12 +264,154 @@ class ImageStorage {
         return UIGraphicsGetImageFromCurrentImageContext() ?? image
     }
     
-    // MARK: - PDF用画像取得（高画質版: 400pxにリサイズ）
-    
     func getImageForPDF(_ fileName: String, drawing: PKDrawing?, textOverlay: UIImage? = nil) -> UIImage? {
         guard let composite = getCompositeImage(fileName, drawing: drawing, textOverlay: textOverlay) else {
             return nil
         }
         return resizeImage(composite, maxSize: 800)
+    }
+    
+    // MARK: - 画像結合（複数写真を1枚に）
+    
+    /// 複数画像を結合して保存
+    /// - 2枚: 横並び
+    /// - 3枚: 上2枚、下1枚中央
+    /// - 4枚: 2x2グリッド
+    func composeImages(_ fileNames: [String]) -> String? {
+        guard fileNames.count >= 2 && fileNames.count <= 4 else { return nil }
+        
+        // 画像を読み込み
+        let images = fileNames.compactMap { loadImage($0) }
+        guard images.count == fileNames.count else { return nil }
+        
+        // 結合画像を生成
+        guard let composedImage = createCompositeLayout(images: images) else { return nil }
+        
+        // 保存
+        return saveImage(composedImage)
+    }
+    
+    /// レイアウトに応じた結合画像を生成
+    private func createCompositeLayout(images: [UIImage]) -> UIImage? {
+        // ターゲットサイズ（正方形ベース）
+        let targetSize: CGFloat = 1200
+        
+        switch images.count {
+        case 2:
+            return createHorizontalLayout(images: images, targetSize: targetSize)
+        case 3:
+            return createThreePhotoLayout(images: images, targetSize: targetSize)
+        case 4:
+            return createGridLayout(images: images, targetSize: targetSize)
+        default:
+            return nil
+        }
+    }
+    
+    /// 2枚: 横並びレイアウト
+    private func createHorizontalLayout(images: [UIImage], targetSize: CGFloat) -> UIImage? {
+        let spacing: CGFloat = 4
+        let cellWidth = (targetSize - spacing) / 2
+        let cellHeight = targetSize
+        let canvasSize = CGSize(width: targetSize, height: cellHeight)
+        
+        UIGraphicsBeginImageContextWithOptions(canvasSize, true, 1.0)
+        defer { UIGraphicsEndImageContext() }
+        
+        // 背景を白で塗る
+        UIColor.white.setFill()
+        UIRectFill(CGRect(origin: .zero, size: canvasSize))
+        
+        // 左の画像
+        let leftRect = CGRect(x: 0, y: 0, width: cellWidth, height: cellHeight)
+        drawImageFit(images[0], in: leftRect)
+        
+        // 右の画像
+        let rightRect = CGRect(x: cellWidth + spacing, y: 0, width: cellWidth, height: cellHeight)
+        drawImageFit(images[1], in: rightRect)
+        
+        return UIGraphicsGetImageFromCurrentImageContext()
+    }
+    
+    /// 3枚: 上2枚、下1枚中央（2+1レイアウト）
+    private func createThreePhotoLayout(images: [UIImage], targetSize: CGFloat) -> UIImage? {
+        let spacing: CGFloat = 4
+        let cellWidth = (targetSize - spacing) / 2
+        let cellHeight = (targetSize - spacing) / 2
+        let canvasSize = CGSize(width: targetSize, height: targetSize)
+        
+        UIGraphicsBeginImageContextWithOptions(canvasSize, true, 1.0)
+        defer { UIGraphicsEndImageContext() }
+        
+        UIColor.white.setFill()
+        UIRectFill(CGRect(origin: .zero, size: canvasSize))
+        
+        // 上段左
+        let topLeftRect = CGRect(x: 0, y: 0, width: cellWidth, height: cellHeight)
+        drawImageFit(images[0], in: topLeftRect)
+        
+        // 上段右
+        let topRightRect = CGRect(x: cellWidth + spacing, y: 0, width: cellWidth, height: cellHeight)
+        drawImageFit(images[1], in: topRightRect)
+        
+        // 下段中央（幅いっぱいに表示）
+        let bottomRect = CGRect(x: 0, y: cellHeight + spacing, width: targetSize, height: cellHeight)
+        drawImageFit(images[2], in: bottomRect)
+        
+        return UIGraphicsGetImageFromCurrentImageContext()
+    }
+    
+    /// 4枚: 2x2グリッドレイアウト
+    private func createGridLayout(images: [UIImage], targetSize: CGFloat) -> UIImage? {
+        let spacing: CGFloat = 4
+        let cellWidth = (targetSize - spacing) / 2
+        let cellHeight = (targetSize - spacing) / 2
+        let canvasSize = CGSize(width: targetSize, height: targetSize)
+        
+        UIGraphicsBeginImageContextWithOptions(canvasSize, true, 1.0)
+        defer { UIGraphicsEndImageContext() }
+        
+        UIColor.white.setFill()
+        UIRectFill(CGRect(origin: .zero, size: canvasSize))
+        
+        let positions: [(CGFloat, CGFloat)] = [
+            (0, 0),                           // 左上
+            (cellWidth + spacing, 0),         // 右上
+            (0, cellHeight + spacing),        // 左下
+            (cellWidth + spacing, cellHeight + spacing) // 右下
+        ]
+        
+        for (index, image) in images.enumerated() {
+            let (x, y) = positions[index]
+            let rect = CGRect(x: x, y: y, width: cellWidth, height: cellHeight)
+            drawImageFit(image, in: rect)
+        }
+        
+        return UIGraphicsGetImageFromCurrentImageContext()
+    }
+    
+    /// 画像をセル内にアスペクト比を維持してフィット（全体表示）描画
+    private func drawImageFit(_ image: UIImage, in rect: CGRect) {
+        let imageSize = image.size
+        let targetSize = rect.size
+        
+        // アスペクトフィット計算（画像全体が収まるようにスケール）
+        let widthRatio = targetSize.width / imageSize.width
+        let heightRatio = targetSize.height / imageSize.height
+        let scale = min(widthRatio, heightRatio)
+        
+        let scaledWidth = imageSize.width * scale
+        let scaledHeight = imageSize.height * scale
+        
+        // 中央揃え
+        let x = rect.origin.x + (targetSize.width - scaledWidth) / 2
+        let y = rect.origin.y + (targetSize.height - scaledHeight) / 2
+        
+        // 背景を白で塗る（余白部分）
+        UIColor.white.setFill()
+        UIBezierPath(rect: rect).fill()
+        
+        // 画像を描画
+        image.draw(in: CGRect(x: x, y: y, width: scaledWidth, height: scaledHeight))
     }
 }
