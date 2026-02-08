@@ -10,6 +10,10 @@ protocol MarkupToolbarDelegate: AnyObject {
     func didSelectStamp(_ stamp: StampType)
     func didSelectStampScale(_ scale: CGFloat)
     func didSelectNumberShape(_ shape: NumberShape)
+    func didSelectNumberScale(_ scale: CGFloat)
+    func didSelectNumberVisibility(_ isVisible: Bool)
+    func didSelectNumberFillOpacity(_ opacity: CGFloat)
+    func didSelectNumberRotation(_ rotation: CGFloat)
 }
 
 class MarkupToolbar: UIView {
@@ -51,6 +55,7 @@ class MarkupToolbar: UIView {
     
     private let colorSelectionIndicator = UIView()
     private weak var colorStackRef: UIStackView?
+    private weak var colorContainerRef: UIView?
     
     private let textSizeSelectionIndicator = UIView()
     private weak var textSizeStackRef: UIStackView?
@@ -85,9 +90,28 @@ class MarkupToolbar: UIView {
     
     // Number Stamp（数字スタンプ）
     private var selectedNumberShape: NumberShape = .circle
+    private var orderedNumberShapes: [NumberShape] = []
     private var numberShapeButtons: [NumberShape: UIButton] = [:]
-    private weak var numberStampContainerRef: UIView?
+    private weak var numberContainerRef: UIView?
+    private var isNumberPanelExpanded = true
+    private weak var numberExpandedContentRef: UIStackView?
+    private weak var numberToggleButtonRef: UIButton?
     private weak var numberShapeStackRef: UIStackView?
+    private var selectedNumberScale: CGFloat = 0.5
+    private var orderedNumberScales: [CGFloat] = [0.25, 0.5] // S, L（Lは旧S）
+    private var selectedNumberVisibility: Bool = true
+    private var selectedNumberFillOpacity: CGFloat = 1.0
+    private weak var numberVisibilityStackRef: UIStackView?
+    private weak var numberVisibilityButtonRef: UIButton?
+    private weak var numberOpacityStackRef: UIStackView?
+    private weak var numberOpacitySliderRef: UISlider?
+    private weak var numberOpacityLabelRef: UILabel?
+    private weak var numberScaleStackRef: UIStackView?
+    private var numberScaleButtons: [UIButton] = []
+    private var selectedNumberRotation: CGFloat = 0
+    private weak var numberRotationStackRef: UIStackView?
+    private weak var numberRotationLabelRef: UILabel?
+    private weak var numberRotationSliderRef: UISlider?
     
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -233,35 +257,81 @@ class MarkupToolbar: UIView {
             penWidthButtons.append(btn)
         }
         
+        // Number Stamp Container（折りたたみ対応）
+        let numberContainer = UIView()
+        numberContainer.isHidden = true
+        numberContainer.alpha = 0
+        mainStack.addArrangedSubview(numberContainer)
+        self.numberContainerRef = numberContainer
+
+        let numberOuterStack = UIStackView()
+        numberOuterStack.axis = .vertical
+        numberOuterStack.spacing = 6
+        numberOuterStack.distribution = .fill
+        numberOuterStack.translatesAutoresizingMaskIntoConstraints = false
+        numberContainer.addSubview(numberOuterStack)
+        NSLayoutConstraint.activate([
+            numberOuterStack.leadingAnchor.constraint(equalTo: numberContainer.leadingAnchor),
+            numberOuterStack.trailingAnchor.constraint(equalTo: numberContainer.trailingAnchor),
+            numberOuterStack.topAnchor.constraint(equalTo: numberContainer.topAnchor),
+            numberOuterStack.bottomAnchor.constraint(equalTo: numberContainer.bottomAnchor)
+        ])
+
+        let numberToggleRow = UIStackView()
+        numberToggleRow.axis = .horizontal
+        numberToggleRow.distribution = .fill
+        numberToggleRow.alignment = .center
+        numberToggleRow.heightAnchor.constraint(equalToConstant: 20).isActive = true
+        numberOuterStack.addArrangedSubview(numberToggleRow)
+
+        let numberPanelTitle = UILabel()
+        numberPanelTitle.text = "数字スタンプ"
+        numberPanelTitle.textColor = UIColor.white.withAlphaComponent(0.85)
+        numberPanelTitle.font = .systemFont(ofSize: 12, weight: .semibold)
+        numberToggleRow.addArrangedSubview(numberPanelTitle)
+
+        let numberToggleSpacer = UIView()
+        numberToggleRow.addArrangedSubview(numberToggleSpacer)
+
+        let numberToggleButton = UIButton(type: .system)
+        numberToggleButton.setImage(UIImage(systemName: "chevron.down"), for: .normal)
+        numberToggleButton.tintColor = UIColor.white.withAlphaComponent(0.6)
+        numberToggleButton.contentHorizontalAlignment = .right
+        numberToggleButton.widthAnchor.constraint(equalToConstant: 40).isActive = true
+        numberToggleButton.addAction(UIAction { [weak self] _ in self?.toggleNumberPanel() }, for: .touchUpInside)
+        numberToggleRow.addArrangedSubview(numberToggleButton)
+        self.numberToggleButtonRef = numberToggleButton
+
+        let numberExpandedContent = UIStackView()
+        numberExpandedContent.axis = .vertical
+        numberExpandedContent.spacing = 8
+        numberExpandedContent.distribution = .fill
+        numberOuterStack.addArrangedSubview(numberExpandedContent)
+        self.numberExpandedContentRef = numberExpandedContent
+
         // Number Shape Stack
         let numberShapeStack = UIStackView()
         numberShapeStack.axis = .horizontal
-        numberShapeStack.spacing = 20
+        numberShapeStack.spacing = 8
         numberShapeStack.distribution = .fillEqually
-        numberShapeStack.isHidden = true
-        numberShapeStack.alpha = 0
-        mainStack.addArrangedSubview(numberShapeStack)
+        numberExpandedContent.addArrangedSubview(numberShapeStack)
         numberShapeStack.heightAnchor.constraint(equalToConstant: 38).isActive = true
         self.numberShapeStackRef = numberShapeStack
-        
-        // Indicator
-        let nsIndicator = UIView()
-        nsIndicator.backgroundColor = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0)
-        nsIndicator.layer.cornerRadius = 8
-        // Need to add indicator to stack or manage separately? 
-        // For simplicity, let's just highlight the button image like stamp scales 
-        // OR implement indicator logic later. Let's use simple button state for now.
-        
+
+        let numberShapePan = UIPanGestureRecognizer(target: self, action: #selector(handleNumberShapePan(_:)))
+        numberShapeStack.addGestureRecognizer(numberShapePan)
+
         let shapes: [(NumberShape, String)] = [
             (.circle, "circle.fill"),
             (.square, "square.fill"),
-            (.rectangle, "rectangle.fill")
+            (.rectangle, "rectangle.fill"),
+            (.diamond, "diamond.fill"),
+            (.triangle, "triangle.fill")
         ]
-        
+
         for (shape, icon) in shapes {
             let btn = UIButton()
-            // Configuration for larger icon
-            let config = UIImage.SymbolConfiguration(pointSize: 20)
+            let config = UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
             btn.setImage(UIImage(systemName: icon, withConfiguration: config), for: .normal)
             btn.tintColor = .white
             btn.backgroundColor = UIColor.white.withAlphaComponent(0.1)
@@ -269,10 +339,156 @@ class MarkupToolbar: UIView {
             btn.addAction(UIAction { [weak self] _ in self?.selectNumberShape(shape) }, for: .touchUpInside)
             numberShapeStack.addArrangedSubview(btn)
             numberShapeButtons[shape] = btn
+            orderedNumberShapes.append(shape)
         }
-        
-        // Initial Update
         updateNumberShapeUI()
+
+        // Number visibility (ON/OFF)
+        let numberVisibilityStack = UIStackView()
+        numberVisibilityStack.axis = .horizontal
+        numberVisibilityStack.spacing = 8
+        numberVisibilityStack.alignment = .center
+        numberVisibilityStack.distribution = .fill
+        numberExpandedContent.addArrangedSubview(numberVisibilityStack)
+        numberVisibilityStack.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        self.numberVisibilityStackRef = numberVisibilityStack
+
+        let numberVisibilityTitle = UILabel()
+        numberVisibilityTitle.text = "数字表示"
+        numberVisibilityTitle.textColor = .white
+        numberVisibilityTitle.font = .systemFont(ofSize: 13, weight: .medium)
+        numberVisibilityStack.addArrangedSubview(numberVisibilityTitle)
+
+        let numberVisibilitySpacer = UIView()
+        numberVisibilityStack.addArrangedSubview(numberVisibilitySpacer)
+
+        let numberVisibilityButton = UIButton(type: .system)
+        numberVisibilityButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .bold)
+        numberVisibilityButton.layer.cornerRadius = 12
+        numberVisibilityButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        numberVisibilityButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 64).isActive = true
+        numberVisibilityButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.selectNumberVisibility(!self.selectedNumberVisibility)
+        }, for: .touchUpInside)
+        numberVisibilityStack.addArrangedSubview(numberVisibilityButton)
+        self.numberVisibilityButtonRef = numberVisibilityButton
+
+        // Number fill opacity slider (10% step)
+        let numberOpacityStack = UIStackView()
+        numberOpacityStack.axis = .horizontal
+        numberOpacityStack.spacing = 8
+        numberOpacityStack.alignment = .center
+        numberOpacityStack.distribution = .fill
+        numberExpandedContent.addArrangedSubview(numberOpacityStack)
+        numberOpacityStack.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        self.numberOpacityStackRef = numberOpacityStack
+
+        let numberOpacityTitle = UILabel()
+        numberOpacityTitle.text = "塗り"
+        numberOpacityTitle.textColor = .white
+        numberOpacityTitle.font = .systemFont(ofSize: 13, weight: .medium)
+        numberOpacityTitle.setContentHuggingPriority(.required, for: .horizontal)
+        numberOpacityStack.addArrangedSubview(numberOpacityTitle)
+
+        let numberOpacitySlider = UISlider()
+        numberOpacitySlider.minimumValue = 0.0
+        numberOpacitySlider.maximumValue = 1.0
+        numberOpacitySlider.value = Float(selectedNumberFillOpacity)
+        numberOpacitySlider.minimumTrackTintColor = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0)
+        numberOpacitySlider.maximumTrackTintColor = UIColor.white.withAlphaComponent(0.25)
+        numberOpacitySlider.addTarget(self, action: #selector(handleNumberOpacitySliderChanged(_:)), for: .valueChanged)
+        numberOpacityStack.addArrangedSubview(numberOpacitySlider)
+        self.numberOpacitySliderRef = numberOpacitySlider
+
+        let numberOpacityLabel = UILabel()
+        numberOpacityLabel.textColor = .white
+        numberOpacityLabel.font = .systemFont(ofSize: 12, weight: .bold)
+        numberOpacityLabel.textAlignment = .right
+        numberOpacityLabel.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        numberOpacityStack.addArrangedSubview(numberOpacityLabel)
+        self.numberOpacityLabelRef = numberOpacityLabel
+
+        updateNumberVisibilityUI()
+        updateNumberFillOpacityUI()
+
+        // Number size selection (S/L)
+        let numberScaleStack = UIStackView()
+        numberScaleStack.axis = .horizontal
+        numberScaleStack.spacing = 8
+        numberScaleStack.alignment = .center
+        numberScaleStack.distribution = .fill
+        numberExpandedContent.addArrangedSubview(numberScaleStack)
+        numberScaleStack.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        self.numberScaleStackRef = numberScaleStack
+
+        let numberScaleTitle = UILabel()
+        numberScaleTitle.text = "サイズ"
+        numberScaleTitle.textColor = .white
+        numberScaleTitle.font = .systemFont(ofSize: 13, weight: .medium)
+        numberScaleTitle.setContentHuggingPriority(.required, for: .horizontal)
+        numberScaleStack.addArrangedSubview(numberScaleTitle)
+
+        let numberScaleButtonRow = UIStackView()
+        numberScaleButtonRow.axis = .horizontal
+        numberScaleButtonRow.spacing = 8
+        numberScaleButtonRow.distribution = .fillEqually
+        numberScaleStack.addArrangedSubview(numberScaleButtonRow)
+
+        let numberScaleConfigs: [(CGFloat, String)] = [
+            (orderedNumberScales[0], "S"),
+            (orderedNumberScales[1], "L")
+        ]
+        for (scale, label) in numberScaleConfigs {
+            let btn = UIButton(type: .system)
+            btn.setTitle(label, for: .normal)
+            btn.setTitleColor(.white, for: .normal)
+            btn.titleLabel?.font = .systemFont(ofSize: 12, weight: .bold)
+            btn.backgroundColor = UIColor.white.withAlphaComponent(0.1)
+            btn.layer.cornerRadius = 10
+            btn.heightAnchor.constraint(equalToConstant: 28).isActive = true
+            btn.addAction(UIAction { [weak self] _ in self?.selectNumberScale(scale) }, for: .touchUpInside)
+            numberScaleButtonRow.addArrangedSubview(btn)
+            numberScaleButtons.append(btn)
+        }
+        updateNumberStampScaleUI()
+
+        // Number rotation controls (0...90, 15-step slider)
+        let numberRotationStack = UIStackView()
+        numberRotationStack.axis = .horizontal
+        numberRotationStack.spacing = 8
+        numberRotationStack.alignment = .center
+        numberRotationStack.distribution = .fill
+        numberExpandedContent.addArrangedSubview(numberRotationStack)
+        numberRotationStack.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        self.numberRotationStackRef = numberRotationStack
+
+        let numberRotationTitle = UILabel()
+        numberRotationTitle.text = "回転"
+        numberRotationTitle.textColor = .white
+        numberRotationTitle.font = .systemFont(ofSize: 13, weight: .medium)
+        numberRotationTitle.setContentHuggingPriority(.required, for: .horizontal)
+        numberRotationStack.addArrangedSubview(numberRotationTitle)
+
+        let numberRotationSlider = UISlider()
+        numberRotationSlider.minimumValue = 0
+        numberRotationSlider.maximumValue = 90
+        numberRotationSlider.value = 0
+        numberRotationSlider.minimumTrackTintColor = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0)
+        numberRotationSlider.maximumTrackTintColor = UIColor.white.withAlphaComponent(0.25)
+        numberRotationSlider.addTarget(self, action: #selector(handleNumberRotationSliderChanged(_:)), for: .valueChanged)
+        numberRotationStack.addArrangedSubview(numberRotationSlider)
+        self.numberRotationSliderRef = numberRotationSlider
+
+        let numberRotationLabel = UILabel()
+        numberRotationLabel.textColor = .white
+        numberRotationLabel.font = .systemFont(ofSize: 12, weight: .bold)
+        numberRotationLabel.textAlignment = .right
+        numberRotationLabel.widthAnchor.constraint(equalToConstant: 52).isActive = true
+        numberRotationStack.addArrangedSubview(numberRotationLabel)
+        self.numberRotationLabelRef = numberRotationLabel
+        updateNumberRotationUI()
+        
         let stampContainer = UIView()
         stampContainer.isHidden = true
         stampContainer.alpha = 0
@@ -338,7 +554,6 @@ class MarkupToolbar: UIView {
         let symbolStamps = allStamps.filter { $0.category == "記号" }  // 10 items -> 2 rows
         let textStamps = allStamps.filter { $0.category == "テキスト" }  // 5 items -> 1 row
         let emojiStamps = allStamps.filter { $0.category == "絵文字" }  // 4 items -> 1 row
-        let numberStamps = allStamps.filter { $0.category == "番号" }  // 1 item -> 1 row
         
         // Helper to create a row of stamps
         func createStampRow(stamps: [StampType], maxPerRow: Int) -> UIStackView {
@@ -382,9 +597,8 @@ class MarkupToolbar: UIView {
         gridStack.addArrangedSubview(createStampRow(stamps: Array(symbolStamps.suffix(5)), maxPerRow: 5))
         // Row 3: Text
         gridStack.addArrangedSubview(createStampRow(stamps: textStamps, maxPerRow: 5))
-        // Row 4: Emoji + Number
-        let row4Stamps = emojiStamps + numberStamps  // 4 + 1 = 5
-        gridStack.addArrangedSubview(createStampRow(stamps: row4Stamps, maxPerRow: 5))
+        // Row 4: Emoji
+        gridStack.addArrangedSubview(createStampRow(stamps: emojiStamps, maxPerRow: 5))
         
         // Add pan gesture for swipe selection
         let stampPan = UIPanGestureRecognizer(target: self, action: #selector(handleStampPan(_:)))
@@ -504,14 +718,16 @@ class MarkupToolbar: UIView {
         mainStack.addArrangedSubview(separator)
         
         // 2. Color Stack (Bottom)
-        let colorContainer = UIScrollView()
-        colorContainer.showsHorizontalScrollIndicator = false
+        let colorContainer = UIView()
+        colorContainer.clipsToBounds = true
         mainStack.addArrangedSubview(colorContainer)
         colorContainer.heightAnchor.constraint(equalToConstant: 34).isActive = true // Fixed height for colors
+        self.colorContainerRef = colorContainer
         
         let colorStack = UIStackView()
         colorStack.axis = .horizontal
-        colorStack.spacing = 12
+        colorStack.spacing = 4
+        colorStack.distribution = .equalSpacing
         colorStack.alignment = .center
         colorStack.translatesAutoresizingMaskIntoConstraints = false
         colorContainer.addSubview(colorStack)
@@ -521,28 +737,28 @@ class MarkupToolbar: UIView {
             colorStack.topAnchor.constraint(equalTo: colorContainer.topAnchor),
             colorStack.bottomAnchor.constraint(equalTo: colorContainer.bottomAnchor),
             colorStack.leadingAnchor.constraint(equalTo: colorContainer.leadingAnchor),
-            colorStack.trailingAnchor.constraint(equalTo: colorContainer.trailingAnchor),
-            colorStack.heightAnchor.constraint(equalTo: colorContainer.heightAnchor)
+            colorStack.trailingAnchor.constraint(equalTo: colorContainer.trailingAnchor)
         ])
         
         // Setup Color Indicator
         colorSelectionIndicator.backgroundColor = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0) // Accent Green
-        colorSelectionIndicator.layer.cornerRadius = 16 // Slightly larger than button radius (12) + padding
+        colorSelectionIndicator.layer.cornerRadius = 13
         colorStack.addSubview(colorSelectionIndicator)
         colorStack.sendSubviewToBack(colorSelectionIndicator)
         
         // Add Pan Gesture for Color Swipe Selection
         let colorPan = UIPanGestureRecognizer(target: self, action: #selector(handleColorPan(_:)))
-        colorStack.addGestureRecognizer(colorPan)
+        colorPan.cancelsTouchesInView = false
+        colorContainer.addGestureRecognizer(colorPan)
         
         for color in MarkupColors.all {
             orderedColors.append(color)
             let btn = UIButton()
             btn.translatesAutoresizingMaskIntoConstraints = false
-            btn.widthAnchor.constraint(equalToConstant: 24).isActive = true
-            btn.heightAnchor.constraint(equalToConstant: 24).isActive = true
+            btn.widthAnchor.constraint(equalToConstant: 18).isActive = true
+            btn.heightAnchor.constraint(equalToConstant: 18).isActive = true
             btn.backgroundColor = color
-            btn.layer.cornerRadius = 12
+            btn.layer.cornerRadius = 9
             btn.layer.borderWidth = 1
             btn.layer.borderColor = UIColor.white.withAlphaComponent(0.3).cgColor
             
@@ -656,29 +872,35 @@ class MarkupToolbar: UIView {
     }
     
     @objc private func handleColorPan(_ gesture: UIPanGestureRecognizer) {
-        guard let colorStack = gesture.view else { return }
+        guard gesture.state == .began || gesture.state == .changed,
+              let colorStack = colorStackRef else { return }
         let location = gesture.location(in: colorStack)
-        
-        // Note: For colors in a scrollable view or spaced stack, "segmentWidth" isn't uniform if we consider spacing.
-        // However, colorStack is an internal UIStackView inside the ScrollView, so its width grows.
-        // We can just find which button frame contains the touch x.
-        
-        // Find button closest to touch X
-        // Optimization: Assume roughly equal width distribution or iterate buttons
-        
-        // Simple hit test logic for scrubbing:
-        // Identify which button's horizontal range [minX, maxX] covers location.x
-        
-        if let btn = colorButtons.first(where: { btn in
-            // Hit test with some margin
-            let f = btn.frame
-            return location.x >= f.minX - 6 && location.x <= f.maxX + 6
-        }), let color = buttonColors[btn] {
+
+        if let btn = colorButtons.min(by: { abs($0.center.x - location.x) < abs($1.center.x - location.x) }),
+           let color = buttonColors[btn] {
             if color != selectedColor {
                 selectColor(color)
                 let generator = UISelectionFeedbackGenerator()
                 generator.selectionChanged()
             }
+        }
+    }
+
+    @objc private func handleNumberShapePan(_ gesture: UIPanGestureRecognizer) {
+        guard let stack = numberShapeStackRef else { return }
+        let location = gesture.location(in: stack)
+        let width = stack.bounds.width
+        let count = CGFloat(orderedNumberShapes.count)
+        guard width > 0, count > 0 else { return }
+
+        let segmentWidth = width / count
+        let index = Int(floor(location.x / segmentWidth))
+        let clampedIndex = max(0, min(orderedNumberShapes.count - 1, index))
+        let shape = orderedNumberShapes[clampedIndex]
+
+        if shape != selectedNumberShape {
+            selectNumberShape(shape)
+            UISelectionFeedbackGenerator().selectionChanged()
         }
     }
     
@@ -702,7 +924,8 @@ class MarkupToolbar: UIView {
         markerWidthStackRef?.isHidden = !isMarker
         penWidthStackRef?.isHidden = !isPen
         stampContainerRef?.isHidden = !isStamp
-        numberShapeStackRef?.isHidden = !isNumberStamp
+        numberContainerRef?.isHidden = !isNumberStamp
+        numberExpandedContentRef?.isHidden = !isNumberStamp || !isNumberPanelExpanded
         
         // Step 2: Force layout update BEFORE reading frame values
         setNeedsLayout()
@@ -718,7 +941,8 @@ class MarkupToolbar: UIView {
             self.markerWidthStackRef?.alpha = isMarker ? 1.0 : 0.0
             self.penWidthStackRef?.alpha = isPen ? 1.0 : 0.0
             self.stampContainerRef?.alpha = isStamp ? 1.0 : 0.0
-            self.numberShapeStackRef?.alpha = isNumberStamp ? 1.0 : 0.0
+            self.numberContainerRef?.alpha = isNumberStamp ? 1.0 : 0.0
+            self.numberExpandedContentRef?.alpha = (isNumberStamp && self.isNumberPanelExpanded) ? 1.0 : 0.0
         }
     }
     
@@ -761,6 +985,42 @@ class MarkupToolbar: UIView {
         }
         updateNumberShapeUI()
     }
+
+    func selectNumberScale(_ scale: CGFloat, notifyDelegate: Bool = true) {
+        let snapped = orderedNumberScales.min(by: { abs($0 - scale) < abs($1 - scale) }) ?? scale
+        selectedNumberScale = snapped
+        if notifyDelegate {
+            delegate?.didSelectNumberScale(snapped)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
+        updateNumberStampScaleUI()
+    }
+    
+    func selectNumberVisibility(_ isVisible: Bool, notifyDelegate: Bool = true) {
+        selectedNumberVisibility = isVisible
+        if notifyDelegate {
+            delegate?.didSelectNumberVisibility(isVisible)
+        }
+        updateNumberVisibilityUI()
+    }
+    
+    func selectNumberFillOpacity(_ opacity: CGFloat, notifyDelegate: Bool = true) {
+        let clamped = max(0.0, min(1.0, opacity))
+        let stepped = round(clamped * 10) / 10
+        selectedNumberFillOpacity = stepped
+        if notifyDelegate {
+            delegate?.didSelectNumberFillOpacity(stepped)
+        }
+        updateNumberFillOpacityUI()
+    }
+
+    func selectNumberRotation(_ rotation: CGFloat, notifyDelegate: Bool = true) {
+        selectedNumberRotation = normalizedNumberRotation(rotation)
+        if notifyDelegate {
+            delegate?.didSelectNumberRotation(selectedNumberRotation)
+        }
+        updateNumberRotationUI()
+    }
     
     private func updateNumberShapeUI() {
         for (shape, btn) in numberShapeButtons {
@@ -771,12 +1031,67 @@ class MarkupToolbar: UIView {
         }
     }
     
+    private func updateNumberVisibilityUI() {
+        guard let button = numberVisibilityButtonRef else { return }
+        let accent = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0)
+        button.setTitle(selectedNumberVisibility ? "ON" : "OFF", for: .normal)
+        button.setTitleColor(.white, for: .normal)
+        button.backgroundColor = selectedNumberVisibility ? accent : UIColor.white.withAlphaComponent(0.2)
+    }
+    
+    private func updateNumberFillOpacityUI() {
+        numberOpacitySliderRef?.setValue(Float(selectedNumberFillOpacity), animated: false)
+        let percent = Int((selectedNumberFillOpacity * 100).rounded())
+        numberOpacityLabelRef?.text = "\(percent)%"
+    }
+
+    private func updateNumberRotationUI() {
+        let normalized = normalizedNumberRotation(selectedNumberRotation)
+        selectedNumberRotation = normalized
+        let degree = Int((normalized * 180.0 / .pi).rounded())
+        numberRotationSliderRef?.setValue(Float(degree), animated: false)
+        numberRotationLabelRef?.text = "\(degree)°"
+    }
+
+    private func normalizedNumberRotation(_ angle: CGFloat) -> CGFloat {
+        let step = CGFloat.pi / 12.0
+        let snapped = round(angle / step) * step
+        return max(0, min(.pi / 2.0, snapped))
+    }
+    
+    @objc private func handleNumberOpacitySliderChanged(_ sender: UISlider) {
+        let stepped = CGFloat(round(sender.value * 10) / 10)
+        selectNumberFillOpacity(stepped)
+    }
+
+    @objc private func handleNumberRotationSliderChanged(_ sender: UISlider) {
+        let steppedDegree = CGFloat(round(sender.value / 15) * 15)
+        let radians = steppedDegree * .pi / 180.0
+        selectNumberRotation(radians)
+    }
+    
     func selectStamp(_ stamp: StampType) {
         selectedStamp = stamp
         delegate?.didSelectStamp(stamp)
         updateStampSelectionUI()
         updateStampHeaderLabel()
         // ハプティックフィードバック
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    private func toggleNumberPanel() {
+        isNumberPanelExpanded.toggle()
+        self.layoutIfNeeded()
+
+        UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseInOut) {
+            self.numberExpandedContentRef?.alpha = self.isNumberPanelExpanded ? 1.0 : 0.0
+            self.numberExpandedContentRef?.isHidden = !self.isNumberPanelExpanded
+            let angle: CGFloat = self.isNumberPanelExpanded ? 0 : .pi
+            self.numberToggleButtonRef?.transform = CGAffineTransform(rotationAngle: angle)
+            self.layoutIfNeeded()
+            self.superview?.layoutIfNeeded()
+        }
+
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
     
@@ -831,11 +1146,13 @@ class MarkupToolbar: UIView {
         }
     }
     
-    func selectStampScale(_ scale: CGFloat) {
+    func selectStampScale(_ scale: CGFloat, notifyDelegate: Bool = true) {
         selectedStampScale = scale
-        delegate?.didSelectStampScale(scale)
+        if notifyDelegate {
+            delegate?.didSelectStampScale(scale)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
         updateStampScaleUI()
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
     
     private func updateStampScaleUI() {
@@ -850,6 +1167,17 @@ class MarkupToolbar: UIView {
                     btn.backgroundColor = UIColor.white.withAlphaComponent(0.1)
                 }
             }
+        }
+    }
+
+    private func updateNumberStampScaleUI() {
+        let accentGreen = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0)
+        for (index, btn) in numberScaleButtons.enumerated() {
+            guard index < orderedNumberScales.count else { continue }
+            let scale = orderedNumberScales[index]
+            let isSelected = (scale == selectedNumberScale)
+            btn.backgroundColor = isSelected ? accentGreen : UIColor.white.withAlphaComponent(0.1)
+            btn.tintColor = isSelected ? .white : UIColor.white.withAlphaComponent(0.7)
         }
     }
     
@@ -999,6 +1327,10 @@ class MarkupToolbar: UIView {
         updateArrowStyleIndicatorPosition(animated: animated)
         updateMarkerWidthIndicatorPosition(animated: animated)
         updatePenWidthIndicatorPosition(animated: animated)
+        updateNumberVisibilityUI()
+        updateNumberFillOpacityUI()
+        updateNumberStampScaleUI()
+        updateNumberRotationUI()
         
         // Color buttons update
         for btn in colorButtons {
@@ -1050,7 +1382,7 @@ class MarkupToolbar: UIView {
         let buttonFrame = btn.frame
         if buttonFrame.width == 0 { return }
         
-        let size: CGFloat = 34
+        let size: CGFloat = 26
         let targetFrame = CGRect(
             x: buttonFrame.midX - size/2,
             y: buttonFrame.midY - size/2,

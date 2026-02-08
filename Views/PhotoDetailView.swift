@@ -8,6 +8,7 @@
 import SwiftUI
 import SwiftData
 import PencilKit
+import UIKit
 
 struct PhotoDetailView: View {
     @State private var currentPhoto: CasePhoto
@@ -19,6 +20,7 @@ struct PhotoDetailView: View {
     @State private var showDeleteAlert = false
     @State private var showDecomposeAlert = false // 結合解除確認
     @State private var slideOffset: CGFloat = 0 // スライドアニメーション用
+    @State private var isStampSummaryExpanded = false
     
     // 仕様: アクセントカラー Color(red: 0.2, green: 0.78, blue: 0.35)
     private let accentGreen = Color(red: 0.2, green: 0.78, blue: 0.35)
@@ -211,6 +213,67 @@ struct PhotoDetailView: View {
                     }
             }
             .padding(.top, 4)
+            
+            HStack {
+                Image(systemName: "list.bullet.rectangle")
+                    .foregroundColor(.orange)
+                Text("スタンプ集計を表示")
+                    .font(.subheadline)
+                Spacer()
+                Toggle("", isOn: stampSummaryEnabledBinding)
+                    .labelsHidden()
+                    .tint(accentGreen)
+            }
+            .padding(.top, 2)
+            
+            if currentPhoto.isStampSummaryEnabled {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        isStampSummaryExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .rotationEffect(.degrees(isStampSummaryExpanded ? 90 : 0))
+                            .foregroundColor(.secondary)
+                        Text("凡例 \(stampLegendItems.count)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.primary)
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 2)
+                
+                if isStampSummaryExpanded {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if stampLegendItems.isEmpty {
+                            Text("スタンプなし")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        } else {
+                            ForEach(stampLegendItems) { item in
+                                HStack(spacing: 8) {
+                                    StampLegendSwatchView(item: item)
+                                        .frame(width: 56, alignment: .leading)
+                                    TextField("意味", text: stampLegendMeaningBinding(for: item))
+                                        .textFieldStyle(.roundedBorder)
+                                        .font(.caption2)
+                                    Text("\(item.count)個")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundColor(.secondary)
+                                        .frame(width: 40, alignment: .trailing)
+                                }
+                                .frame(minHeight: 30)
+                            }
+                        }
+                    }
+                    .padding(.top, 2)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
         }
         .padding()
         .gesture(
@@ -226,6 +289,43 @@ struct PhotoDetailView: View {
     
     private var noteLineCount: Int {
         currentPhoto.note.components(separatedBy: "\n").count
+    }
+
+    private var stampSummaryEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { currentPhoto.isStampSummaryEnabled },
+            set: { newValue in
+                currentPhoto.isStampSummaryEnabled = newValue
+                currentPhoto.parentCase?.touch()
+                try? modelContext.save()
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isStampSummaryExpanded = false
+                }
+            }
+        )
+    }
+
+    private var stampLegendItems: [StampLegendItem] {
+        StampLegendBuilder.summarize(stamps: currentPhoto.annotations?.stamps ?? [])
+    }
+
+    private func stampLegendMeaningBinding(for item: StampLegendItem) -> Binding<String> {
+        Binding(
+            get: {
+                currentPhoto.stampLegendMeanings[item.key] ?? ""
+            },
+            set: { newValue in
+                var meanings = currentPhoto.stampLegendMeanings
+                if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    meanings.removeValue(forKey: item.key)
+                } else {
+                    meanings[item.key] = newValue
+                }
+                currentPhoto.stampLegendMeanings = meanings
+                currentPhoto.parentCase?.touch()
+                try? modelContext.save()
+            }
+        )
     }
     
     private var photoIndexString: String? {
@@ -336,6 +436,7 @@ struct PhotoDetailView: View {
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             currentPhoto = prevPhoto
+            isStampSummaryExpanded = false
             slideOffset = -UIScreen.main.bounds.width
             loadImage()
             
@@ -364,6 +465,7 @@ struct PhotoDetailView: View {
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             currentPhoto = nextPhoto
+            isStampSummaryExpanded = false
             slideOffset = UIScreen.main.bounds.width
             loadImage()
             
@@ -503,6 +605,94 @@ struct MarkupLoaderView: View {
         // 常に元画像のみをロード（テキスト/矢印は焼き込まない）
         // textOverlayDataは保持したまま、マークアップ画面では別レイヤーとして表示
         originalImage = baseImage
+    }
+}
+
+private struct StampLegendSwatchView: View {
+    let item: StampLegendItem
+    
+    private var stampUIColor: UIColor {
+        UIColor(hex: item.colorHex) ?? .systemRed
+    }
+    
+    private var stampColor: Color {
+        Color(uiColor: stampUIColor)
+    }
+    
+    private var showsNumberText: Bool {
+        item.isNumberStamp && item.showsNumber
+    }
+    
+    var body: some View {
+        swatchBody
+    }
+    
+    @ViewBuilder
+    private var swatchBody: some View {
+        if item.isNumberStamp {
+            ZStack {
+                LegendNumberShape(shape: item.numberShape ?? .circle)
+                    .fill(stampColor.opacity(item.fillOpacity))
+                    .overlay(LegendNumberShape(shape: item.numberShape ?? .circle).stroke(Color.white, lineWidth: 1.5))
+                if showsNumberText {
+                    Text("\(item.sampleNumber ?? 1)")
+                        .font(.caption.weight(.bold))
+                        .foregroundColor(.white)
+                }
+            }
+            .frame(width: numberShapeSize.width, height: numberShapeSize.height)
+        } else {
+            Text(item.symbolText)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(stampColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.45)
+                .frame(width: nonNumberSize.width, height: nonNumberSize.height)
+        }
+    }
+    
+    private var numberShapeSize: CGSize {
+        if item.numberShape == .rectangle {
+            return CGSize(width: 34, height: 22)
+        }
+        return CGSize(width: 24, height: 24)
+    }
+    
+    private var nonNumberSize: CGSize {
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 13, weight: .bold)
+        ]
+        let width = (item.symbolText as NSString).size(withAttributes: attrs).width
+        let clamped = min(max(width + 4, 14), 56)
+        return CGSize(width: clamped, height: 20)
+    }
+}
+
+private struct LegendNumberShape: Shape {
+    let shape: NumberStampShapeKind
+    
+    func path(in rect: CGRect) -> Path {
+        switch shape {
+        case .circle:
+            return Circle().path(in: rect)
+        case .square, .rectangle:
+            return RoundedRectangle(cornerRadius: 4, style: .continuous).path(in: rect)
+        case .diamond:
+            var path = Path()
+            path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+            path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.midY))
+            path.closeSubpath()
+            return path
+        case .triangle:
+            var path = Path()
+            path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.closeSubpath()
+            return path
+        }
     }
 }
 

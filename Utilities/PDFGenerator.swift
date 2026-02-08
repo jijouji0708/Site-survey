@@ -27,15 +27,27 @@ class PDFGenerator {
         let photos = caseItem.sortedPhotos
         let showCoverPage = caseItem.showCoverPage
         
-        // 写真データを準備（isFullPage情報も含む）
-        var photoDataList: [(fileName: String, note: String, drawing: Data?, textOverlay: UIImage?, isFullPage: Bool)] = []
+        // 写真データを準備（isFullPage/スタンプ集計情報も含む）
+        var photoDataList: [(
+            fileName: String,
+            note: String,
+            drawing: Data?,
+            textOverlay: UIImage?,
+            annotations: MarkupData?,
+            isFullPage: Bool,
+            isStampSummaryEnabled: Bool,
+            stampLegendMeanings: [String: String]
+        )] = []
         for photo in photos {
             photoDataList.append((
                 fileName: photo.imageFileName,
                 note: photo.note,
                 drawing: photo.markupData,
                 textOverlay: photo.textOverlay,
-                isFullPage: photo.isFullPage
+                annotations: photo.annotations,
+                isFullPage: photo.isFullPage,
+                isStampSummaryEnabled: photo.isStampSummaryEnabled,
+                stampLegendMeanings: photo.stampLegendMeanings
             ))
         }
         
@@ -61,7 +73,15 @@ class PDFGenerator {
                 // フルページ写真を出力
                 drawFullPagePhoto(
                     title: title,
-                    photoData: (photoData.fileName, photoData.note, photoData.drawing, photoData.textOverlay),
+                    photoData: (
+                        fileName: photoData.fileName,
+                        note: photoData.note,
+                        drawing: photoData.drawing,
+                        textOverlay: photoData.textOverlay,
+                        annotations: photoData.annotations,
+                        isStampSummaryEnabled: photoData.isStampSummaryEnabled,
+                        stampLegendMeanings: photoData.stampLegendMeanings
+                    ),
                     number: photoNumber
                 )
             } else {
@@ -133,7 +153,15 @@ class PDFGenerator {
     
     private func drawFullPagePhoto(
         title: String,
-        photoData: (fileName: String, note: String, drawing: Data?, textOverlay: UIImage?),
+        photoData: (
+            fileName: String,
+            note: String,
+            drawing: Data?,
+            textOverlay: UIImage?,
+            annotations: MarkupData?,
+            isStampSummaryEnabled: Bool,
+            stampLegendMeanings: [String: String]
+        ),
         number: Int
     ) {
         UIGraphicsBeginPDFPage()
@@ -148,11 +176,25 @@ class PDFGenerator {
         ]
         (title as NSString).draw(at: CGPoint(x: margin, y: headerY), withAttributes: headerAttr)
         
+        let trimmedNote = photoData.note.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasNote = !trimmedNote.isEmpty
+        let summaryItems = photoData.isStampSummaryEnabled
+            ? StampLegendBuilder.summarize(stamps: photoData.annotations?.stamps ?? [])
+            : []
+        let hasSummary = !summaryItems.isEmpty
+        
+        let summaryLayout = summaryGridLayout(for: summaryItems.count)
+        let summarySectionHeight: CGFloat = hasSummary
+            ? (CGFloat(summaryLayout.rowCount) * summaryLayout.rowHeight + 34)
+            : 0
+        let noteSectionHeight: CGFloat = hasNote ? 78 : 0
+        let sectionSpacing: CGFloat = (hasNote && hasSummary) ? 8 : 0
+        let infoAreaHeight = noteSectionHeight + summarySectionHeight + sectionSpacing
+        
         // 写真エリア（バッジ用の余白を確保）
         let badgeInset: CGFloat = 20
         let photoAreaY: CGFloat = 50
-        let noteAreaHeight: CGFloat = photoData.note.isEmpty ? 0 : 80
-        let photoAreaHeight = pageHeight - photoAreaY - margin - noteAreaHeight
+        let photoAreaHeight = pageHeight - photoAreaY - margin - infoAreaHeight
         let photoRect = CGRect(x: margin + badgeInset, y: photoAreaY + badgeInset, 
                               width: pageWidth - margin * 2 - badgeInset, height: photoAreaHeight - badgeInset)
         
@@ -222,30 +264,240 @@ class PDFGenerator {
         (numStr as NSString).draw(at: CGPoint(x: badgeRect.midX - numSize.width/2, y: badgeRect.midY - numSize.height/2), withAttributes: numAttr)
         context.restoreGState()
         
-        // メモエリア
-        if !photoData.note.isEmpty {
-            let noteY = photoRect.maxY + 10
-            let noteRect = CGRect(x: margin, y: noteY, width: pageWidth - margin * 2, height: noteAreaHeight - 20)
+        // メモ + スタンプ凡例
+        var sectionY = photoRect.maxY + 10
+        if hasNote {
+            let noteRect = CGRect(
+                x: photoRect.minX,
+                y: sectionY,
+                width: photoRect.width,
+                height: noteSectionHeight
+            )
+            drawSimpleNoteSection(context: context, rect: noteRect, content: trimmedNote)
+            sectionY = noteRect.maxY + (hasSummary ? 8 : 0)
+        }
+        
+        if hasSummary {
+            let summaryRect = CGRect(
+                x: photoRect.minX,
+                y: sectionY,
+                width: photoRect.width,
+                height: summarySectionHeight
+            )
+            drawStampSummarySection(
+                context: context,
+                rect: summaryRect,
+                items: summaryItems,
+                meanings: photoData.stampLegendMeanings,
+                columnCount: summaryLayout.columnCount,
+                rowHeight: summaryLayout.rowHeight
+            )
+        }
+    }
+    
+    private func drawSimpleNoteSection(context: CGContext, rect: CGRect, content: String) {
+        context.saveGState()
+        let notePath = UIBezierPath(roundedRect: rect, cornerRadius: 6)
+        UIColor(white: 0.96, alpha: 1).setFill()
+        notePath.fill()
+        context.restoreGState()
+        
+        let titleAttr: [NSAttributedString.Key: Any] = [
+            .font: UIFont.boldSystemFont(ofSize: 11),
+            .foregroundColor: accentGreen
+        ]
+        ("メモ" as NSString).draw(at: CGPoint(x: rect.minX + 10, y: rect.minY + 8), withAttributes: titleAttr)
+        
+        let para = NSMutableParagraphStyle()
+        para.alignment = .left
+        para.lineBreakMode = .byWordWrapping
+        
+        let noteAttr: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 11),
+            .foregroundColor: textDark,
+            .paragraphStyle: para
+        ]
+        
+        let noteInsetRect = CGRect(
+            x: rect.minX + 10,
+            y: rect.minY + 24,
+            width: rect.width - 20,
+            height: rect.height - 30
+        )
+        (content as NSString).draw(in: noteInsetRect, withAttributes: noteAttr)
+    }
+    
+    private func drawStampSummarySection(
+        context: CGContext,
+        rect: CGRect,
+        items: [StampLegendItem],
+        meanings: [String: String],
+        columnCount: Int,
+        rowHeight: CGFloat
+    ) {
+        context.saveGState()
+        let panelPath = UIBezierPath(roundedRect: rect, cornerRadius: 6)
+        UIColor(white: 0.96, alpha: 1).setFill()
+        panelPath.fill()
+        context.restoreGState()
+        
+        let titleAttr: [NSAttributedString.Key: Any] = [
+            .font: UIFont.boldSystemFont(ofSize: 11),
+            .foregroundColor: accentGreen
+        ]
+        ("スタンプ集計" as NSString).draw(at: CGPoint(x: rect.minX + 10, y: rect.minY + 8), withAttributes: titleAttr)
+        
+        guard !items.isEmpty else { return }
+        
+        let safeColumnCount = max(1, min(3, columnCount))
+        let rowsPerColumn = Int(ceil(Double(items.count) / Double(safeColumnCount)))
+        let contentX = rect.minX + 10
+        let contentY = rect.minY + 24
+        let contentWidth = rect.width - 20
+        let columnGap: CGFloat = 10
+        let totalGap = CGFloat(max(0, safeColumnCount - 1)) * columnGap
+        let columnWidth = (contentWidth - totalGap) / CGFloat(safeColumnCount)
+        
+        let iconWidth: CGFloat = 44
+        let countWidth: CGFloat = 32
+        
+        for (index, item) in items.enumerated() {
+            let column = index / rowsPerColumn
+            let row = index % rowsPerColumn
+            guard column < safeColumnCount else { continue }
             
-            context.saveGState()
-            let notePath = UIBezierPath(roundedRect: noteRect, cornerRadius: 6)
-            UIColor(white: 0.96, alpha: 1).setFill()
-            notePath.fill()
-            context.restoreGState()
+            let cellX = contentX + CGFloat(column) * (columnWidth + columnGap)
+            let cellY = contentY + CGFloat(row) * rowHeight
+            let cellRect = CGRect(x: cellX, y: cellY, width: columnWidth, height: rowHeight)
             
+            let iconRect = CGRect(
+                x: cellRect.minX,
+                y: cellRect.minY + 1,
+                width: iconWidth,
+                height: max(14, rowHeight - 2)
+            )
+            drawStampLegendIcon(context: context, item: item, rect: iconRect)
+            
+            let countRect = CGRect(
+                x: cellRect.maxX - countWidth,
+                y: cellRect.minY + 1,
+                width: countWidth,
+                height: max(14, rowHeight - 2)
+            )
+            let countAttr: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 9, weight: .semibold),
+                .foregroundColor: textDark
+            ]
+            let countText = "\(item.count)個"
+            let countSize = countText.size(withAttributes: countAttr)
+            let countPoint = CGPoint(
+                x: countRect.maxX - countSize.width,
+                y: countRect.midY - countSize.height / 2
+            )
+            (countText as NSString).draw(at: countPoint, withAttributes: countAttr)
+            
+            let textX = iconRect.maxX + 6
+            let textRect = CGRect(
+                x: textX,
+                y: cellRect.minY + 1,
+                width: max(10, countRect.minX - textX - 4),
+                height: max(14, rowHeight - 2)
+            )
+            let meaning = meanings[item.key]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let text = meaning.isEmpty ? " " : meaning
             let para = NSMutableParagraphStyle()
             para.alignment = .left
-            para.lineBreakMode = .byWordWrapping
-            
-            let noteAttr: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 11),
+            para.lineBreakMode = .byTruncatingTail
+            let textAttr: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 9),
                 .foregroundColor: textDark,
                 .paragraphStyle: para
             ]
-            
-            let noteInsetRect = noteRect.insetBy(dx: 10, dy: 8)
-            (photoData.note as NSString).draw(in: noteInsetRect, withAttributes: noteAttr)
+            (text as NSString).draw(in: textRect, withAttributes: textAttr)
         }
+    }
+    
+    private func summaryGridLayout(for itemCount: Int) -> (columnCount: Int, rowCount: Int, rowHeight: CGFloat) {
+        guard itemCount > 0 else { return (1, 0, 20) }
+        let maxRowsBeforeSplit = 8
+        let columnCount = min(3, max(1, Int(ceil(Double(itemCount) / Double(maxRowsBeforeSplit)))))
+        let rowCount = Int(ceil(Double(itemCount) / Double(columnCount)))
+        let rowHeight: CGFloat = rowCount > 10 ? 18 : 20
+        return (columnCount, rowCount, rowHeight)
+    }
+    
+    private func drawStampLegendIcon(context: CGContext, item: StampLegendItem, rect: CGRect) {
+        let color = UIColor(hex: item.colorHex) ?? .systemRed
+        
+        if item.isNumberStamp {
+            context.saveGState()
+            context.setFillColor(color.withAlphaComponent(item.fillOpacity).cgColor)
+            context.setStrokeColor(UIColor.white.cgColor)
+            context.setLineWidth(1.2)
+            
+            let shape = item.numberShape ?? .circle
+            let targetSize: CGSize = (shape == .rectangle)
+                ? CGSize(width: 24, height: 14)
+                : CGSize(width: 16, height: 16)
+            let drawRect = CGRect(
+                x: rect.midX - targetSize.width / 2,
+                y: rect.midY - targetSize.height / 2,
+                width: targetSize.width,
+                height: targetSize.height
+            )
+            switch shape {
+            case .circle:
+                context.fillEllipse(in: drawRect)
+                context.strokeEllipse(in: drawRect)
+            case .square, .rectangle:
+                let rounded = UIBezierPath(roundedRect: drawRect, cornerRadius: 3)
+                context.addPath(rounded.cgPath)
+                context.drawPath(using: .fillStroke)
+            case .diamond:
+                context.beginPath()
+                context.move(to: CGPoint(x: drawRect.midX, y: drawRect.minY))
+                context.addLine(to: CGPoint(x: drawRect.maxX, y: drawRect.midY))
+                context.addLine(to: CGPoint(x: drawRect.midX, y: drawRect.maxY))
+                context.addLine(to: CGPoint(x: drawRect.minX, y: drawRect.midY))
+                context.closePath()
+                context.drawPath(using: .fillStroke)
+            case .triangle:
+                context.beginPath()
+                context.move(to: CGPoint(x: drawRect.midX, y: drawRect.minY))
+                context.addLine(to: CGPoint(x: drawRect.maxX, y: drawRect.maxY))
+                context.addLine(to: CGPoint(x: drawRect.minX, y: drawRect.maxY))
+                context.closePath()
+                context.drawPath(using: .fillStroke)
+            }
+            
+            if item.showsNumber {
+                let text = "\(item.sampleNumber ?? 1)"
+                let textAttr: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.boldSystemFont(ofSize: 9),
+                    .foregroundColor: UIColor.white
+                ]
+                let textSize = text.size(withAttributes: textAttr)
+                let textPoint = CGPoint(
+                    x: drawRect.midX - textSize.width / 2,
+                    y: drawRect.midY - textSize.height / 2
+                )
+                (text as NSString).draw(at: textPoint, withAttributes: textAttr)
+            }
+            context.restoreGState()
+            return
+        }
+        
+        let text = item.symbolText
+        let para = NSMutableParagraphStyle()
+        para.alignment = .center
+        para.lineBreakMode = .byClipping
+        let textAttr: [NSAttributedString.Key: Any] = [
+            .font: UIFont.boldSystemFont(ofSize: 9),
+            .foregroundColor: color,
+            .paragraphStyle: para
+        ]
+        let textRect = rect.insetBy(dx: 0.5, dy: 2)
+        (text as NSString).draw(in: textRect, withAttributes: textAttr)
     }
     
     // MARK: - 表紙（シンプル版）

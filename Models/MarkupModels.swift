@@ -48,8 +48,17 @@ nonisolated enum StampType: String, Codable, CaseIterable {
     case locked = "🔒"
     case pin = "📍"
     
-    // 番号 (Number) - 1 item (dynamic numbering)
+    // 旧番号スタンプ（後方互換用。新規作成UIには表示しない）
     case numberedCircle = "①"
+    
+    // 新規作成UIで表示するスタンプのみ
+    nonisolated static var allCases: [StampType] {
+        [
+            .check, .cross, .circle, .triangle, .star, .target, .arrowUp, .arrowRight, .arrowDown, .arrowLeft,
+            .ok, .ng, .new, .before, .after,
+            .warning, .prohibited, .locked, .pin
+        ]
+    }
     
     var displayText: String { rawValue }
     
@@ -63,7 +72,7 @@ nonisolated enum StampType: String, Codable, CaseIterable {
         case .warning, .prohibited, .locked, .pin:
             return "絵文字"
         case .numberedCircle:
-            return "番号"
+            return "旧番号"
         }
     }
     
@@ -82,8 +91,11 @@ nonisolated struct StampAnnotationModel: Codable, Identifiable {
     
     var colorHex: String
     var scale: CGFloat = 1.0 // サイズ倍率
-    var numberValue: Int? = nil // 番号スタンプ用の番号（①なら1）
-    var numberShape: String? = nil // 番号スタンプの図形タイプ（circle/square/rectangle）
+    var numberValue: Int? = nil // 番号スタンプ用の番号
+    var numberShape: String? = nil // 番号スタンプの図形タイプ（circle/square/rectangle/diamond/triangle）
+    var numberVisible: Bool? = nil // 番号表示ON/OFF（番号スタンプ用）
+    var numberFillOpacity: CGFloat? = nil // 塗りつぶし率 0.0...1.0（番号スタンプ用）
+    var numberRotation: CGFloat? = nil // 回転角（ラジアン, 番号スタンプ用）
     
     var uicolor: UIColor {
         return UIColor(hex: colorHex) ?? .red
@@ -112,8 +124,142 @@ nonisolated struct StampAnnotationModel: Codable, Identifiable {
             colorHex: colorHex,
             scale: scale,
             numberValue: numberValue,
-            numberShape: numberShape
+            numberShape: numberShape,
+            numberVisible: numberVisible,
+            numberFillOpacity: numberFillOpacity,
+            numberRotation: numberRotation
         )
+    }
+}
+
+nonisolated enum NumberStampShapeKind: String, Codable, CaseIterable {
+    case circle = "circle"
+    case square = "square"
+    case rectangle = "rectangle"
+    case diamond = "diamond"
+    case triangle = "triangle"
+
+    var displayIcon: String {
+        switch self {
+        case .circle:
+            return "○"
+        case .square:
+            return "□"
+        case .rectangle:
+            return "▭"
+        case .diamond:
+            return "◇"
+        case .triangle:
+            return "△"
+        }
+    }
+}
+
+nonisolated struct StampLegendItem: Identifiable, Hashable {
+    var key: String
+    var order: Int
+    var count: Int
+    var colorHex: String
+    var stampTypeRaw: String?
+    var numberShapeRaw: String?
+    var sampleNumber: Int?
+    var showsNumber: Bool
+    var fillOpacity: CGFloat
+
+    var id: String { key }
+
+    var stampType: StampType? {
+        guard let stampTypeRaw else { return nil }
+        return StampType(rawValue: stampTypeRaw)
+    }
+
+    var numberShape: NumberStampShapeKind? {
+        guard let numberShapeRaw else { return nil }
+        return NumberStampShapeKind(rawValue: numberShapeRaw)
+    }
+
+    var isNumberStamp: Bool {
+        numberShape != nil || stampType?.isNumbered == true
+    }
+
+    var symbolText: String {
+        if isNumberStamp {
+            return (numberShape ?? .circle).displayIcon
+        }
+        return stampType?.displayText ?? "?"
+    }
+}
+
+nonisolated enum StampLegendBuilder {
+    static func summarize(stamps: [StampAnnotationModel]) -> [StampLegendItem] {
+        var itemsByKey: [String: StampLegendItem] = [:]
+
+        for (index, stamp) in stamps.enumerated() {
+            let key = legendKey(for: stamp)
+            if var existing = itemsByKey[key] {
+                existing.count += 1
+                itemsByKey[key] = existing
+                continue
+            }
+
+            let colorHex = normalizedColorHex(stamp.colorHex)
+            if isNumberStamp(stamp) {
+                let shape = NumberStampShapeKind(rawValue: stamp.numberShape ?? "") ?? .circle
+                let item = StampLegendItem(
+                    key: key,
+                    order: index,
+                    count: 1,
+                    colorHex: colorHex,
+                    stampTypeRaw: nil,
+                    numberShapeRaw: shape.rawValue,
+                    sampleNumber: stamp.numberValue ?? 1,
+                    showsNumber: stamp.numberVisible ?? true,
+                    fillOpacity: max(0.0, min(1.0, stamp.numberFillOpacity ?? 1.0))
+                )
+                itemsByKey[key] = item
+            } else {
+                let item = StampLegendItem(
+                    key: key,
+                    order: index,
+                    count: 1,
+                    colorHex: colorHex,
+                    stampTypeRaw: stamp.stampType.rawValue,
+                    numberShapeRaw: nil,
+                    sampleNumber: nil,
+                    showsNumber: true,
+                    fillOpacity: 1.0
+                )
+                itemsByKey[key] = item
+            }
+        }
+
+        return itemsByKey.values.sorted { lhs, rhs in
+            if lhs.order == rhs.order {
+                return lhs.key < rhs.key
+            }
+            return lhs.order < rhs.order
+        }
+    }
+
+    static func legendKey(for stamp: StampAnnotationModel) -> String {
+        let colorHex = normalizedColorHex(stamp.colorHex)
+        if isNumberStamp(stamp) {
+            let shape = NumberStampShapeKind(rawValue: stamp.numberShape ?? "") ?? .circle
+            return "number|\(shape.rawValue)|\(colorHex)"
+        }
+        return "stamp|\(stamp.stampType.rawValue)|\(colorHex)"
+    }
+
+    private static func isNumberStamp(_ stamp: StampAnnotationModel) -> Bool {
+        stamp.numberShape != nil || stamp.stampType == .numberedCircle
+    }
+
+    private static func normalizedColorHex(_ hex: String) -> String {
+        var normalized = hex.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if !normalized.hasPrefix("#") {
+            normalized = "#\(normalized)"
+        }
+        return normalized
     }
 }
 
@@ -279,9 +425,13 @@ struct MarkupColors {
     static let black = UIColor(red: 0.001, green: 0.001, blue: 0.001, alpha: 1)
     static let gray = UIColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1)
     static let red = UIColor(red: 1, green: 0.23, blue: 0.19, alpha: 1)
+    static let orange = UIColor(red: 1, green: 0.58, blue: 0.0, alpha: 1)
+    static let pink = UIColor(red: 1, green: 0.18, blue: 0.55, alpha: 1)
+    static let purple = UIColor(red: 0.69, green: 0.32, blue: 0.87, alpha: 1)
     static let blue = UIColor(red: 0, green: 0.48, blue: 1, alpha: 1)
     static let yellow = UIColor(red: 1, green: 0.8, blue: 0, alpha: 1)
     static let green = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1)
     
-    static let all: [UIColor] = [white, black, gray, red, blue, yellow, green]
+    // 無彩色 -> 暖色 -> 寒色 -> 紫 -> ピンクの並び
+    static let all: [UIColor] = [white, gray, black, red, orange, yellow, green, blue, purple, pink]
 }

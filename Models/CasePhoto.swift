@@ -36,6 +36,12 @@ final class CasePhoto {
     // 1ページ表示フラグ（PDFで1枚1ページで表示）
     var isFullPage: Bool = false
     
+    // スタンプ集計表示の有効/無効（写真詳細 + PDFで共通利用）
+    var isStampSummaryEnabled: Bool = false
+    
+    // スタンプ凡例ごとの意味テキスト（JSON: [legendKey: text]）
+    var stampLegendMeaningsData: Data?
+    
     var parentCase: Case?
     
     // PKDrawing アクセサ
@@ -60,6 +66,20 @@ final class CasePhoto {
             } else {
                 annotationData = nil
             }
+        }
+    }
+    
+    // スタンプ凡例の意味テキスト
+    var stampLegendMeanings: [String: String] {
+        get {
+            guard let data = stampLegendMeaningsData,
+                  let decoded = try? JSONDecoder().decode([String: String].self, from: data) else {
+                return [:]
+            }
+            return decoded
+        }
+        set {
+            stampLegendMeaningsData = try? JSONEncoder().encode(newValue)
         }
     }
     
