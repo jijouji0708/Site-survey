@@ -2,6 +2,10 @@ import SwiftUI
 import PencilKit
 
 struct PhotoMarkupView: View {
+    private let saveNotification = Notification.Name("PerformMarkupSave")
+    private let undoNotification = Notification.Name("PerformMarkupUndo")
+    private let redoNotification = Notification.Name("PerformMarkupRedo")
+    
     @Environment(\.dismiss) var dismiss
     var image: UIImage
     var drawing: PKDrawing?
@@ -13,6 +17,21 @@ struct PhotoMarkupView: View {
     @State private var showDiscardAlert = false
     
     var body: some View {
+        markupContent
+        .edgesIgnoringSafeArea(.all)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                backButton
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                trailingToolbarItems
+            }
+        }
+        .alert("変更を保存しますか？", isPresented: $showDiscardAlert, actions: discardAlertActions)
+    }
+    
+    private var markupContent: some View {
         MarkupWrapper(
             image: image,
             existingDrawing: drawing,
@@ -26,25 +45,17 @@ struct PhotoMarkupView: View {
                 dismiss()
             }
         )
-        .edgesIgnoringSafeArea(.all)
-        .navigationBarBackButtonHidden(true) // Hide default back button
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                backButton
-            }
-            ToolbarItem(placement: .navigationBarTrailing) {
-                trailingToolbarItems
-            }
+    }
+    
+    @ViewBuilder
+    private func discardAlertActions() -> some View {
+        Button("保存") {
+            NotificationCenter.default.post(name: saveNotification, object: nil)
         }
-        .alert("変更を保存しますか？", isPresented: $showDiscardAlert) {
-            Button("保存", role: .none) {
-                NotificationCenter.default.post(name: Notification.Name("PerformMarkupSave"), object: nil)
-            }
-            Button("保存せずに戻る", role: .destructive) {
-                dismiss()
-            }
-            Button("キャンセル", role: .cancel) {}
+        Button("保存せずに戻る", role: .destructive) {
+            dismiss()
         }
+        Button("キャンセル", role: .cancel) {}
     }
     
     private var backButton: some View {
@@ -58,14 +69,14 @@ struct PhotoMarkupView: View {
     
     private var trailingToolbarItems: some View {
         HStack {
-            Button(action: { NotificationCenter.default.post(name: Notification.Name("PerformMarkupUndo"), object: nil) }) {
+            Button(action: { NotificationCenter.default.post(name: undoNotification, object: nil) }) {
                 Image(systemName: "arrow.uturn.backward")
             }
-            Button(action: { NotificationCenter.default.post(name: Notification.Name("PerformMarkupRedo"), object: nil) }) {
+            Button(action: { NotificationCenter.default.post(name: redoNotification, object: nil) }) {
                 Image(systemName: "arrow.uturn.forward")
             }
             Button("完了") {
-                NotificationCenter.default.post(name: Notification.Name("PerformMarkupSave"), object: nil)
+                NotificationCenter.default.post(name: saveNotification, object: nil)
             }
             .fontWeight(.bold)
         }

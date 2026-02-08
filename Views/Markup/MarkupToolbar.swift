@@ -9,6 +9,7 @@ protocol MarkupToolbarDelegate: AnyObject {
     func didSelectPenWidth(_ width: CGFloat)
     func didSelectStamp(_ stamp: StampType)
     func didSelectStampScale(_ scale: CGFloat)
+    func didSelectNumberShape(_ shape: NumberShape)
 }
 
 class MarkupToolbar: UIView {
@@ -77,10 +78,16 @@ class MarkupToolbar: UIView {
     private weak var stampScaleStackRef: UIStackView?
     
     // Stamp Panel Collapse
-    private var isStampPanelExpanded = false
+    private var isStampPanelExpanded = true  // Default: expanded
     private weak var stampExpandedContentRef: UIStackView?
     private weak var stampToggleButtonRef: UIButton?
     private var stampContainerHeightConstraint: NSLayoutConstraint?
+    
+    // Number Stamp（数字スタンプ）
+    private var selectedNumberShape: NumberShape = .circle
+    private var numberShapeButtons: [NumberShape: UIButton] = [:]
+    private weak var numberStampContainerRef: UIView?
+    private weak var numberShapeStackRef: UIStackView?
     
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -97,7 +104,7 @@ class MarkupToolbar: UIView {
         let mainStack = UIStackView()
         mainStack.axis = .vertical
         mainStack.spacing = 10
-        mainStack.distribution = .fillProportionally
+        mainStack.distribution = .fill
         mainStack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(mainStack)
         
@@ -116,6 +123,7 @@ class MarkupToolbar: UIView {
         textSizeStack.isHidden = true // Default hidden
         textSizeStack.alpha = 0
         mainStack.addArrangedSubview(textSizeStack)
+        textSizeStack.heightAnchor.constraint(equalToConstant: 36).isActive = true
         self.textSizeStackRef = textSizeStack
         
         // Setup Text Size Indicator
@@ -147,6 +155,7 @@ class MarkupToolbar: UIView {
         arrowStyleStack.isHidden = true
         arrowStyleStack.alpha = 0
         mainStack.addArrangedSubview(arrowStyleStack)
+        arrowStyleStack.heightAnchor.constraint(equalToConstant: 36).isActive = true
         self.arrowStyleStackRef = arrowStyleStack
         
         // Arrow Indicator
@@ -167,6 +176,7 @@ class MarkupToolbar: UIView {
         markerWidthStack.isHidden = true // Initially hidden
         markerWidthStack.alpha = 0
         mainStack.addArrangedSubview(markerWidthStack)
+        markerWidthStack.heightAnchor.constraint(equalToConstant: 36).isActive = true
         self.markerWidthStackRef = markerWidthStack
         
         // Setup Marker Width Indicator
@@ -198,6 +208,7 @@ class MarkupToolbar: UIView {
         penWidthStack.isHidden = true // Initially hidden
         penWidthStack.alpha = 0
         mainStack.addArrangedSubview(penWidthStack)
+        penWidthStack.heightAnchor.constraint(equalToConstant: 36).isActive = true
         self.penWidthStackRef = penWidthStack
         
         // Setup Pen Width Indicator
@@ -222,7 +233,46 @@ class MarkupToolbar: UIView {
             penWidthButtons.append(btn)
         }
         
-        // Stamp Selection Panel (collapsible, default expanded)
+        // Number Shape Stack
+        let numberShapeStack = UIStackView()
+        numberShapeStack.axis = .horizontal
+        numberShapeStack.spacing = 20
+        numberShapeStack.distribution = .fillEqually
+        numberShapeStack.isHidden = true
+        numberShapeStack.alpha = 0
+        mainStack.addArrangedSubview(numberShapeStack)
+        numberShapeStack.heightAnchor.constraint(equalToConstant: 38).isActive = true
+        self.numberShapeStackRef = numberShapeStack
+        
+        // Indicator
+        let nsIndicator = UIView()
+        nsIndicator.backgroundColor = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0)
+        nsIndicator.layer.cornerRadius = 8
+        // Need to add indicator to stack or manage separately? 
+        // For simplicity, let's just highlight the button image like stamp scales 
+        // OR implement indicator logic later. Let's use simple button state for now.
+        
+        let shapes: [(NumberShape, String)] = [
+            (.circle, "circle.fill"),
+            (.square, "square.fill"),
+            (.rectangle, "rectangle.fill")
+        ]
+        
+        for (shape, icon) in shapes {
+            let btn = UIButton()
+            // Configuration for larger icon
+            let config = UIImage.SymbolConfiguration(pointSize: 20)
+            btn.setImage(UIImage(systemName: icon, withConfiguration: config), for: .normal)
+            btn.tintColor = .white
+            btn.backgroundColor = UIColor.white.withAlphaComponent(0.1)
+            btn.layer.cornerRadius = 8
+            btn.addAction(UIAction { [weak self] _ in self?.selectNumberShape(shape) }, for: .touchUpInside)
+            numberShapeStack.addArrangedSubview(btn)
+            numberShapeButtons[shape] = btn
+        }
+        
+        // Initial Update
+        updateNumberShapeUI()
         let stampContainer = UIView()
         stampContainer.isHidden = true
         stampContainer.alpha = 0
@@ -258,7 +308,7 @@ class MarkupToolbar: UIView {
         toggleRow.addArrangedSubview(toggleSpacer)
         
         let toggleBtn = UIButton()
-        toggleBtn.setImage(UIImage(systemName: "chevron.up"), for: .normal)
+        toggleBtn.setImage(UIImage(systemName: "chevron.down"), for: .normal)  // Down = collapse direction
         toggleBtn.tintColor = UIColor.white.withAlphaComponent(0.6)
         toggleBtn.contentHorizontalAlignment = .right
         toggleBtn.addAction(UIAction { [weak self] _ in self?.toggleStampPanel() }, for: .touchUpInside)
@@ -288,6 +338,7 @@ class MarkupToolbar: UIView {
         let symbolStamps = allStamps.filter { $0.category == "記号" }  // 10 items -> 2 rows
         let textStamps = allStamps.filter { $0.category == "テキスト" }  // 5 items -> 1 row
         let emojiStamps = allStamps.filter { $0.category == "絵文字" }  // 4 items -> 1 row
+        let numberStamps = allStamps.filter { $0.category == "番号" }  // 1 item -> 1 row
         
         // Helper to create a row of stamps
         func createStampRow(stamps: [StampType], maxPerRow: Int) -> UIStackView {
@@ -331,8 +382,9 @@ class MarkupToolbar: UIView {
         gridStack.addArrangedSubview(createStampRow(stamps: Array(symbolStamps.suffix(5)), maxPerRow: 5))
         // Row 3: Text
         gridStack.addArrangedSubview(createStampRow(stamps: textStamps, maxPerRow: 5))
-        // Row 4: Emoji
-        gridStack.addArrangedSubview(createStampRow(stamps: emojiStamps, maxPerRow: 5))
+        // Row 4: Emoji + Number
+        let row4Stamps = emojiStamps + numberStamps  // 4 + 1 = 5
+        gridStack.addArrangedSubview(createStampRow(stamps: row4Stamps, maxPerRow: 5))
         
         // Add pan gesture for swipe selection
         let stampPan = UIPanGestureRecognizer(target: self, action: #selector(handleStampPan(_:)))
@@ -406,9 +458,10 @@ class MarkupToolbar: UIView {
         // 1. Tool Stack (Top)
         let toolStack = UIStackView()
         toolStack.axis = .horizontal
-        toolStack.spacing = 15
+        toolStack.spacing = 8
         toolStack.distribution = .fillEqually
         mainStack.addArrangedSubview(toolStack)
+        toolStack.heightAnchor.constraint(equalToConstant: 40).isActive = true
         self.toolStackRef = toolStack
         
         // Setup Tool Indicator
@@ -429,13 +482,15 @@ class MarkupToolbar: UIView {
             (.arrow, "arrow.up.right"),
             (.rect, "rectangle"),
             (.circle, "circle"),
-            (.stamp, "seal")
+            (.stamp, "seal"),
+            (.numberStamp, "number.circle")
         ]
         
         for (tool, icon) in tools {
             orderedTools.append(tool)
             let btn = UIButton()
-            btn.setImage(UIImage(systemName: icon), for: .normal)
+            let config = UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+            btn.setImage(UIImage(systemName: icon, withConfiguration: config), for: .normal)
             btn.tintColor = .white
             btn.addAction(UIAction { [weak self] _ in self?.selectTool(tool) }, for: .touchUpInside)
             toolStack.addArrangedSubview(btn)
@@ -639,6 +694,7 @@ class MarkupToolbar: UIView {
         let isMarker = (tool == .marker)
         let isPen = (tool == .pen)
         let isStamp = (tool == .stamp)
+        let isNumberStamp = (tool == .numberStamp)
         
         // Step 1: Set hidden state IMMEDIATELY (no animation)
         textSizeStackRef?.isHidden = !isText
@@ -646,6 +702,7 @@ class MarkupToolbar: UIView {
         markerWidthStackRef?.isHidden = !isMarker
         penWidthStackRef?.isHidden = !isPen
         stampContainerRef?.isHidden = !isStamp
+        numberShapeStackRef?.isHidden = !isNumberStamp
         
         // Step 2: Force layout update BEFORE reading frame values
         setNeedsLayout()
@@ -661,6 +718,7 @@ class MarkupToolbar: UIView {
             self.markerWidthStackRef?.alpha = isMarker ? 1.0 : 0.0
             self.penWidthStackRef?.alpha = isPen ? 1.0 : 0.0
             self.stampContainerRef?.alpha = isStamp ? 1.0 : 0.0
+            self.numberShapeStackRef?.alpha = isNumberStamp ? 1.0 : 0.0
         }
     }
     
@@ -696,6 +754,23 @@ class MarkupToolbar: UIView {
         updateUI(animated: true)
     }
     
+    func selectNumberShape(_ shape: NumberShape, notifyDelegate: Bool = true) {
+        selectedNumberShape = shape
+        if notifyDelegate {
+            delegate?.didSelectNumberShape(shape)
+        }
+        updateNumberShapeUI()
+    }
+    
+    private func updateNumberShapeUI() {
+        for (shape, btn) in numberShapeButtons {
+            let isSelected = (shape == selectedNumberShape)
+            btn.tintColor = isSelected ? .white : UIColor.white.withAlphaComponent(0.5)
+            btn.backgroundColor = isSelected ? UIColor.white.withAlphaComponent(0.3) : UIColor.white.withAlphaComponent(0.1)
+            btn.transform = isSelected ? CGAffineTransform(scaleX: 1.1, y: 1.1) : .identity
+        }
+    }
+    
     func selectStamp(_ stamp: StampType) {
         selectedStamp = stamp
         delegate?.didSelectStamp(stamp)
@@ -708,14 +783,22 @@ class MarkupToolbar: UIView {
     private func toggleStampPanel() {
         isStampPanelExpanded.toggle()
         
+        // まずlayoutIfNeededを呼び出してからアニメーション
+        self.layoutIfNeeded()
+        
         UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseInOut) {
+            // コンテンツの表示/非表示（alphaで制御）
+            self.stampExpandedContentRef?.alpha = self.isStampPanelExpanded ? 1.0 : 0.0
             self.stampExpandedContentRef?.isHidden = !self.isStampPanelExpanded
-            self.stampContainerHeightConstraint?.constant = self.isStampPanelExpanded ? 170 : 24
             
-            // Rotate toggle button (up when expanded, down when collapsed)
+            // 高さ制約を更新（折りたたみ時は28に増やす）
+            self.stampContainerHeightConstraint?.constant = self.isStampPanelExpanded ? 170 : 28
+            
+            // Rotate toggle button (down when expanded = collapse, up when collapsed = expand)
             let angle: CGFloat = self.isStampPanelExpanded ? 0 : .pi
             self.stampToggleButtonRef?.transform = CGAffineTransform(rotationAngle: angle)
             
+            self.layoutIfNeeded()
             self.superview?.layoutIfNeeded()
         }
         
@@ -940,9 +1023,9 @@ class MarkupToolbar: UIView {
     }
     
     private func updateSelectionIndicatorPosition(animated: Bool) {
-        guard let btn = toolButtons[selectedTool], let toolStack = toolStackRef else { return }
+        guard let btn = toolButtons[selectedTool], toolStackRef != nil else { return }
         
-        let targetFrame = btn.frame.insetBy(dx: -4, dy: -4)
+        let targetFrame = btn.frame.insetBy(dx: -2, dy: -2)
         if targetFrame.width == 0 || targetFrame.height == 0 { return }
         
         let updates = {

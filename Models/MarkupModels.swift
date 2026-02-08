@@ -3,7 +3,7 @@ import Foundation
 
 // MARK: - Data Models
 
-struct MarkupData: Codable {
+nonisolated struct MarkupData: Codable {
     var texts: [TextAnnotationModel] = []
     var arrows: [ArrowAnnotationModel] = []
     var shapes: [ShapeAnnotationModel] = []
@@ -22,7 +22,7 @@ struct MarkupData: Codable {
 
 // MARK: - Stamp Types
 
-enum StampType: String, Codable, CaseIterable {
+nonisolated enum StampType: String, Codable, CaseIterable {
     // 記号 (Symbols) - 10 items
     case check = "✓"
     case cross = "✗"
@@ -48,6 +48,9 @@ enum StampType: String, Codable, CaseIterable {
     case locked = "🔒"
     case pin = "📍"
     
+    // 番号 (Number) - 1 item (dynamic numbering)
+    case numberedCircle = "①"
+    
     var displayText: String { rawValue }
     
     var category: String {
@@ -59,11 +62,17 @@ enum StampType: String, Codable, CaseIterable {
             return "テキスト"
         case .warning, .prohibited, .locked, .pin:
             return "絵文字"
+        case .numberedCircle:
+            return "番号"
         }
+    }
+    
+    var isNumbered: Bool {
+        return self == .numberedCircle
     }
 }
 
-struct StampAnnotationModel: Codable, Identifiable {
+nonisolated struct StampAnnotationModel: Codable, Identifiable {
     var id: UUID = UUID()
     var stampType: StampType
     
@@ -73,9 +82,24 @@ struct StampAnnotationModel: Codable, Identifiable {
     
     var colorHex: String
     var scale: CGFloat = 1.0 // サイズ倍率
+    var numberValue: Int? = nil // 番号スタンプ用の番号（①なら1）
+    var numberShape: String? = nil // 番号スタンプの図形タイプ（circle/square/rectangle）
     
     var uicolor: UIColor {
         return UIColor(hex: colorHex) ?? .red
+    }
+    
+    /// 番号スタンプの表示テキスト（番号のみ）
+    var displayText: String {
+        if stampType.isNumbered, let num = numberValue {
+            return "\(num)"  // 図形は別途描画するので番号だけ
+        }
+        return stampType.displayText
+    }
+    
+    /// 図形付き番号スタンプかどうか
+    var isNumberStamp: Bool {
+        return stampType.isNumbered && numberShape != nil
     }
     
     /// 90度右回転した新しいモデルを返す
@@ -86,12 +110,14 @@ struct StampAnnotationModel: Codable, Identifiable {
             x: 1 - y,
             y: x,
             colorHex: colorHex,
-            scale: scale
+            scale: scale,
+            numberValue: numberValue,
+            numberShape: numberShape
         )
     }
 }
 
-struct ShapeAnnotationModel: Codable, Identifiable {
+nonisolated struct ShapeAnnotationModel: Codable, Identifiable {
     var id: UUID = UUID()
     var type: String // "rect" or "circle"
     
@@ -128,7 +154,7 @@ struct ShapeAnnotationModel: Codable, Identifiable {
     }
 }
 
-struct TextAnnotationModel: Codable, Identifiable {
+nonisolated struct TextAnnotationModel: Codable, Identifiable {
     var id: UUID = UUID()
     var text: String
     var fontSize: CGFloat
@@ -160,13 +186,13 @@ struct TextAnnotationModel: Codable, Identifiable {
     }
 }
 
-enum ArrowStyle: Int, Codable {
+nonisolated enum ArrowStyle: Int, Codable {
     case oneWay = 0
     case twoWay = 1
     case line = 2
 }
 
-struct ArrowAnnotationModel: Codable, Identifiable {
+nonisolated struct ArrowAnnotationModel: Codable, Identifiable {
     var id: UUID = UUID()
     
     // Normalized Coordinates (0.0 - 1.0 relative to Image)

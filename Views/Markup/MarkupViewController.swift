@@ -5,7 +5,22 @@ import AVFoundation
 // MARK: - Enums & Protocols
 
 enum MarkupTool: Int, CaseIterable {
-    case pen, marker, eraser, text, arrow, rect, circle, stamp
+    case pen, marker, eraser, text, arrow, rect, circle, stamp, numberStamp
+}
+
+// 数字スタンプの図形タイプ
+enum NumberShape: String, Codable, CaseIterable {
+    case circle = "circle"      // 丸 ○
+    case square = "square"      // 正方形 □
+    case rectangle = "rectangle" // 長方形 ▭
+    
+    var displayIcon: String {
+        switch self {
+        case .circle: return "○"
+        case .square: return "□"
+        case .rectangle: return "▭"
+        }
+    }
 }
 
 // MARK: - Views (Internal)
@@ -123,18 +138,20 @@ class TextAnnotationView: BaseAnnotationView {
 }
 
 class StampAnnotationView: BaseAnnotationView {
-    var stampType: StampType { didSet { label.text = stampType.displayText; sizeToFit() } }
+    var stampType: StampType { didSet { updateLabelText(); sizeToFit() } }
     var stampColor: UIColor { didSet { label.textColor = stampColor } }
     var scale: CGFloat { didSet { updateFontSize(); sizeToFit() } }
+    var numberValue: Int? { didSet { updateLabelText(); sizeToFit() } }
     
     private let label = UILabel()
     private let bgView = UIView()
     private let baseSize: CGFloat = 32
     
-    init(id: UUID = UUID(), stampType: StampType, color: UIColor, scale: CGFloat = 1.0) {
+    init(id: UUID = UUID(), stampType: StampType, color: UIColor, scale: CGFloat = 1.0, numberValue: Int? = nil) {
         self.stampType = stampType
         self.stampColor = color
         self.scale = scale
+        self.numberValue = numberValue
         super.init(id: id, frame: .zero)
         sizeToFit()
     }
@@ -146,13 +163,37 @@ class StampAnnotationView: BaseAnnotationView {
         addSubview(label)
         
         label.textAlignment = .center
-        label.text = stampType.displayText
+        updateLabelText()
         updateFontSize()
         label.textColor = stampColor
         
         bgView.backgroundColor = UIColor.white.withAlphaComponent(0.5)
         bgView.layer.cornerRadius = 6
         bgView.isHidden = true
+    }
+    
+    private func updateLabelText() {
+        if stampType.isNumbered, let num = numberValue {
+            label.text = circledNumber(num)
+        } else {
+            label.text = stampType.displayText
+        }
+    }
+    
+    private func circledNumber(_ num: Int) -> String {
+        // ①-⑳ (1-20) と ㉑-㊿ (21-50) に対応
+        let circledNumbers1to20 = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩",
+                                   "⑪", "⑫", "⑬", "⑭", "⑮", "⑯", "⑰", "⑱", "⑲", "⑳"]
+        let circledNumbers21to50 = ["㉑", "㉒", "㉓", "㉔", "㉕", "㉖", "㉗", "㉘", "㉙", "㉚",
+                                    "㉛", "㉜", "㉝", "㉞", "㉟", "㊱", "㊲", "㊳", "㊴", "㊵",
+                                    "㊶", "㊷", "㊸", "㊹", "㊺", "㊻", "㊼", "㊽", "㊾", "㊿"]
+        if num >= 1 && num <= 20 {
+            return circledNumbers1to20[num - 1]
+        } else if num >= 21 && num <= 50 {
+            return circledNumbers21to50[num - 21]
+        } else {
+            return "(\(num))"
+        }
     }
     
     private func updateFontSize() {
@@ -175,6 +216,108 @@ class StampAnnotationView: BaseAnnotationView {
         bgView.isHidden = !isSelected
         bgView.layer.borderColor = isSelected ? UIColor.green.cgColor : UIColor.clear.cgColor
         bgView.layer.borderWidth = isSelected ? 2 : 0
+    }
+}
+
+// MARK: - 数字スタンプビュー（図形付き）
+
+class NumberStampAnnotationView: BaseAnnotationView {
+    var numberShape: NumberShape { didSet { setNeedsDisplay(); sizeToFit() } }
+    var stampColor: UIColor { didSet { setNeedsDisplay() } }
+    var scale: CGFloat { didSet { sizeToFit(); setNeedsDisplay() } }
+    var numberValue: Int { didSet { label.text = "\(numberValue)"; sizeToFit() } }
+    
+    private let label = UILabel()
+    private let bgView = UIView()
+    private let baseSize: CGFloat = 28
+    
+    init(id: UUID = UUID(), shape: NumberShape, color: UIColor, scale: CGFloat = 1.0, number: Int) {
+        self.numberShape = shape
+        self.stampColor = color
+        self.scale = scale
+        self.numberValue = number
+        super.init(id: id, frame: .zero)
+        sizeToFit()
+    }
+    
+    required init?(coder: NSCoder) { fatalError() }
+    
+    override func setupView() {
+        backgroundColor = .clear
+        addSubview(bgView)
+        addSubview(label)
+        
+        label.textAlignment = .center
+        label.text = "\(numberValue)"
+        label.font = .systemFont(ofSize: baseSize * scale, weight: .bold)
+        label.textColor = .white
+        
+        bgView.backgroundColor = .clear
+        bgView.isHidden = true
+    }
+    
+    override func draw(_ rect: CGRect) {
+        super.draw(rect)
+        
+        guard let ctx = UIGraphicsGetCurrentContext() else { return }
+        
+        let inset: CGFloat = 2
+        let drawRect = rect.insetBy(dx: inset, dy: inset)
+        
+        // 図形を描画
+        ctx.setFillColor(stampColor.cgColor)
+        
+        switch numberShape {
+        case .circle:
+            let diameter = min(drawRect.width, drawRect.height)
+            let circleRect = CGRect(
+                x: (rect.width - diameter) / 2,
+                y: (rect.height - diameter) / 2,
+                width: diameter,
+                height: diameter
+            )
+            ctx.fillEllipse(in: circleRect)
+        case .square:
+            let side = min(drawRect.width, drawRect.height)
+            let squareRect = CGRect(
+                x: (rect.width - side) / 2,
+                y: (rect.height - side) / 2,
+                width: side,
+                height: side
+            )
+            ctx.fill(squareRect)
+        case .rectangle:
+            ctx.fill(drawRect)
+        }
+    }
+    
+    override func sizeToFit() {
+        let size = label.sizeThatFits(CGSize(width: 500, height: 500))
+        let padding: CGFloat = numberShape == .rectangle ? 16 : 8
+        let dimension = max(size.width, size.height) + padding
+        
+        switch numberShape {
+        case .circle, .square:
+            frame.size = CGSize(width: dimension, height: dimension)
+        case .rectangle:
+            frame.size = CGSize(width: size.width + 20, height: size.height + 10)
+        }
+        
+        label.font = .systemFont(ofSize: baseSize * scale, weight: .bold)
+    }
+    
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        bgView.frame = bounds
+        label.frame = bounds
+    }
+    
+    override func updateSelectionState() {
+        super.updateSelectionState()
+        bgView.isHidden = !isSelected
+        bgView.layer.borderColor = isSelected ? UIColor.green.cgColor : UIColor.clear.cgColor
+        bgView.layer.borderWidth = isSelected ? 2 : 0
+        bgView.layer.cornerRadius = numberShape == .circle ? bounds.width / 2 : 0
     }
 }
 
@@ -515,6 +658,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     private var currentPenWidth: CGFloat = 1 // Default Medium
     private var currentStamp: StampType = .check
     private var currentStampScale: CGFloat = 0.5 // Default Small
+    private var currentNumberShape: NumberShape = .circle // Default Number Shape
     
     private var lastLayoutRect: CGRect = .zero
     private var isDataLoaded = false
@@ -581,8 +725,14 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(toolbar)
         
+        let widthConstraint = toolbar.widthAnchor.constraint(equalTo: view.safeAreaLayoutGuide.widthAnchor, multiplier: 0.92)
+        widthConstraint.priority = .defaultHigh
+        
         NSLayoutConstraint.activate([
-            toolbar.widthAnchor.constraint(equalToConstant: 300),
+            widthConstraint,
+            toolbar.widthAnchor.constraint(lessThanOrEqualToConstant: 420),
+            toolbar.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            toolbar.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
             toolbar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             toolbar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -20)
             // Height is determined by intrinsic content size
@@ -701,6 +851,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         case .rect: toolName = "四角形"; iconName = "rectangle"
         case .circle: toolName = "円"; iconName = "circle"
         case .stamp: toolName = "スタンプ"; iconName = "seal"
+        case .numberStamp: toolName = "番号"; iconName = "number.circle"
         }
         
         // Set icon and tool name
@@ -783,7 +934,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
             canvasView.isUserInteractionEnabled = true
             overlayView.isUserInteractionEnabled = true // Allow tap to delete
             overlayView.isEraserMode = true
-        case .text, .arrow, .rect, .circle, .stamp:
+        case .text, .arrow, .rect, .circle, .stamp, .numberStamp:
             canvasView.tool = PKInkingTool(.pen, color: .clear, width: 0)
             canvasView.isUserInteractionEnabled = false
             overlayView.isUserInteractionEnabled = true
@@ -866,7 +1017,21 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
                     stampType: stamp.stampType,
                     x: normX, y: normY,
                     colorHex: stamp.stampColor.toHex(),
-                    scale: stamp.scale
+                    scale: stamp.scale,
+                    numberValue: stamp.numberValue
+                ))
+            } else if let ns = view as? NumberStampAnnotationView {
+                let normX = (ns.center.x - rect.minX) / rect.width
+                let normY = (ns.center.y - rect.minY) / rect.height
+                
+                stamps.append(StampAnnotationModel(
+                    id: ns.id,
+                    stampType: .numberedCircle, // Use numbered type as base
+                    x: normX, y: normY,
+                    colorHex: ns.stampColor.toHex(),
+                    scale: ns.scale,
+                    numberValue: ns.numberValue,
+                    numberShape: ns.numberShape.rawValue
                 ))
             }
         }
@@ -972,17 +1137,62 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
             for stamp in stamps {
                 let centerX = stamp.x * image.size.width
                 let centerY = stamp.y * image.size.height
-                let fontSize = 32 * stamp.scale / scale
                 
-                let attrs: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: fontSize, weight: .bold),
-                    .foregroundColor: stamp.uicolor
-                ]
-                
-                let text = stamp.stampType.displayText
-                let size = text.size(withAttributes: attrs)
-                let origin = CGPoint(x: centerX - size.width / 2, y: centerY - size.height / 2)
-                text.draw(at: origin, withAttributes: attrs)
+                // Number Stamp Check
+                if let shapeStr = stamp.numberShape,
+                   let shape = NumberShape(rawValue: shapeStr),
+                   let num = stamp.numberValue {
+                    
+                    let baseSize: CGFloat = 28 * stamp.scale / scale
+                    let fontSize = baseSize
+                    
+                    let attrs: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.systemFont(ofSize: fontSize, weight: .bold),
+                        .foregroundColor: UIColor.white
+                    ]
+                    let text = "\(num)"
+                    let textSize = text.size(withAttributes: attrs)
+                    
+                    // Padding logic aligned with View
+                    let padding: CGFloat = (shape == .rectangle) ? 16 : 8
+                    // Scale padding appropriately (baseSize 28 is standard)
+                    let scaledPadding = padding * (baseSize / 28.0)
+                    
+                    let dimension = max(textSize.width, textSize.height) + scaledPadding
+                    
+                    var bgRect: CGRect
+                    if shape == .rectangle {
+                        let w = textSize.width + 20 * (baseSize / 28.0)
+                        let h = textSize.height + 10 * (baseSize / 28.0)
+                        bgRect = CGRect(x: centerX - w/2, y: centerY - h/2, width: w, height: h)
+                    } else {
+                        bgRect = CGRect(x: centerX - dimension/2, y: centerY - dimension/2, width: dimension, height: dimension)
+                    }
+                    
+                    ctx.cgContext.setFillColor(stamp.uicolor.cgColor)
+                    
+                    if shape == .circle {
+                         ctx.cgContext.fillEllipse(in: bgRect)
+                    } else {
+                         ctx.cgContext.fill(bgRect)
+                    }
+                    
+                    let origin = CGPoint(x: centerX - textSize.width / 2, y: centerY - textSize.height / 2)
+                    text.draw(at: origin, withAttributes: attrs)
+                    
+                } else {
+                    let fontSize = 32 * stamp.scale / scale
+                    
+                    let attrs: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.systemFont(ofSize: fontSize, weight: .bold),
+                        .foregroundColor: stamp.uicolor
+                    ]
+                    
+                    let text = stamp.displayText  // numberValueを考慮した表示テキスト
+                    let size = text.size(withAttributes: attrs)
+                    let origin = CGPoint(x: centerX - size.width / 2, y: centerY - size.height / 2)
+                    text.draw(at: origin, withAttributes: attrs)
+                }
             }
         }
         
@@ -1049,6 +1259,8 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         // Create Stamp if tool is stamp
         if currentTool == .stamp {
             createStamp(at: p)
+        } else if currentTool == .numberStamp {
+            createNumberStamp(at: p)
         }
     }
     
@@ -1202,9 +1414,6 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
             }
             
         case .changed:
-            let deltaX = p.x - dragStartPoint.x
-            let deltaY = p.y - dragStartPoint.y
-            
             switch dragMode {
             case .create:
                 if let arrow = activeArrow {
@@ -1305,10 +1514,30 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     }
     
     func createStamp(at p: CGPoint) {
-        let s = StampAnnotationView(stampType: currentStamp, color: currentColor, scale: currentStampScale)
+        var numberValue: Int? = nil
+        
+        // 番号スタンプの場合、次の番号を計算
+        if currentStamp.isNumbered {
+            numberValue = getNextNumberedStampValue()
+        }
+        
+        let s = StampAnnotationView(stampType: currentStamp, color: currentColor, scale: currentStampScale, numberValue: numberValue)
         s.center = p
         addAnnotation(s)
         selectedAnnotation = s
+    }
+    
+    /// 次の番号スタンプの番号を取得（現在の最大値+1）
+    private func getNextNumberedStampValue() -> Int {
+        var maxNumber = 0
+        for view in overlayView.subviews {
+            if let stampView = view as? StampAnnotationView,
+               stampView.stampType.isNumbered,
+               let num = stampView.numberValue {
+                maxNumber = max(maxNumber, num)
+            }
+        }
+        return maxNumber + 1
     }
     
     func startEditingText(for view: TextAnnotationView) {
@@ -1331,7 +1560,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         let toolbar = UIToolbar()
         toolbar.sizeToFit()
         let flex = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
-        let done = UIBarButtonItem(title: "完了", style: .done, target: self, action: #selector(dismissKeyboard))
+        let done = UIBarButtonItem(title: "完了", style: .plain, target: self, action: #selector(dismissKeyboard))
         done.tintColor = .green
         toolbar.items = [flex, done]
         tv.inputAccessoryView = toolbar
@@ -1450,6 +1679,10 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     
     // MARK: - Helpers
     
+    private func saveState() {
+        isDirty = true
+    }
+    
     func addAnnotation(_ v: BaseAnnotationView) {
         overlayView.addSubview(v)
         isDirty = true
@@ -1466,11 +1699,66 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     }
     
     func deleteAnnotation(_ v: BaseAnnotationView) {
+        // 既存のスタンプ（①など）チェック
+        let wasNumberedStamp = (v as? StampAnnotationView)?.stampType.isNumbered == true
+        
+        // 新しい数字スタンプ（丸・四角・長方形）チェック
+        var wasNumberStamp = false
+        var deletedNumberShape: NumberShape?
+        var deletedColor: UIColor?
+        
+        if let ns = v as? NumberStampAnnotationView {
+            wasNumberStamp = true
+            deletedNumberShape = ns.numberShape
+            deletedColor = ns.stampColor
+        }
+        
         v.removeFromSuperview()
         isDirty = true
         undoManager?.registerUndo(withTarget: self, handler: { target in
             target.addAnnotation(v)
+            // Undo時も再連番（追加されたので）
+            if wasNumberedStamp {
+                target.renumberAllNumberedStamps()
+            }
+            if wasNumberStamp, let shape = deletedNumberShape, let color = deletedColor {
+                target.renumberNumberStamps(shape: shape, color: color)
+            }
         })
+        
+        // 番号スタンプの場合、残りを再連番
+        if wasNumberedStamp {
+            renumberAllNumberedStamps()
+        }
+        if wasNumberStamp, let shape = deletedNumberShape, let color = deletedColor {
+            renumberNumberStamps(shape: shape, color: color)
+        }
+    }
+    
+    /// すべての番号スタンプを連番に再設定
+    private func renumberAllNumberedStamps() {
+        // 番号スタンプを取得し、位置順（左上から右下）でソート
+        var numberedStamps: [StampAnnotationView] = []
+        for view in overlayView.subviews {
+            if let stampView = view as? StampAnnotationView,
+               stampView.stampType.isNumbered {
+                numberedStamps.append(stampView)
+            }
+        }
+        
+        // Y座標（上から）→ X座標（左から）でソート
+        numberedStamps.sort { a, b in
+            let tolerance: CGFloat = 20 // 同じ行とみなす許容範囲
+            if abs(a.center.y - b.center.y) < tolerance {
+                return a.center.x < b.center.x
+            }
+            return a.center.y < b.center.y
+        }
+        
+        // 連番を付け直し
+        for (index, stamp) in numberedStamps.enumerated() {
+            stamp.numberValue = index + 1
+        }
     }
     
     func loadData(in rect: CGRect) {
@@ -1534,15 +1822,31 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
             let centerX = stamp.x * rect.width + rect.minX
             let centerY = stamp.y * rect.height + rect.minY
             
-            let v = StampAnnotationView(id: stamp.id, stampType: stamp.stampType, color: stamp.uicolor, scale: stamp.scale)
-            v.center = CGPoint(x: centerX, y: centerY)
-            
-            v.onDelete = { [weak self] in
-                self?.deleteAnnotation(v)
-                self?.selectedAnnotation = nil
+            // Check if it's a Number Stamp
+            if let shapeStr = stamp.numberShape,
+               let shape = NumberShape(rawValue: shapeStr),
+               let num = stamp.numberValue {
+                
+                let v = NumberStampAnnotationView(id: stamp.id, shape: shape, color: stamp.uicolor, scale: stamp.scale, number: num)
+                v.center = CGPoint(x: centerX, y: centerY)
+                
+                v.onDelete = { [weak self] in
+                    self?.deleteAnnotation(v)
+                    self?.selectedAnnotation = nil
+                }
+                overlayView.addSubview(v)
+                
+            } else {
+                // Existing Stamp
+                let v = StampAnnotationView(id: stamp.id, stampType: stamp.stampType, color: stamp.uicolor, scale: stamp.scale, numberValue: stamp.numberValue)
+                v.center = CGPoint(x: centerX, y: centerY)
+                
+                v.onDelete = { [weak self] in
+                    self?.deleteAnnotation(v)
+                    self?.selectedAnnotation = nil
+                }
+                overlayView.addSubview(v)
             }
-            
-            overlayView.addSubview(v)
         }
     }
     
@@ -1610,6 +1914,79 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         // 選択されたスタンプ注釈があれば更新
         if let stampView = selectedAnnotation as? StampAnnotationView {
             stampView.scale = scale
+            saveState()
+        } else if let nv = selectedAnnotation as? NumberStampAnnotationView {
+            nv.scale = scale
+            saveState()
+        }
+    }
+    
+    func didSelectNumberShape(_ shape: NumberShape) {
+        currentNumberShape = shape
+        
+        // Show toast notification
+        showToast(tool: currentTool, color: currentColor)
+        
+        if let nv = selectedAnnotation as? NumberStampAnnotationView {
+            // 図形が変わったら、その新しい図形で連番を再取得する必要があるかも？
+            // ここでは単純に形状変更のみとする
+            nv.numberShape = shape
+            saveState()
+        }
+    }
+
+    // MARK: - Number Stamp Creation
+    
+    func createNumberStamp(at p: CGPoint) {
+        let number = getNextNumberForShapeAndColor(shape: currentNumberShape, color: currentColor)
+        let s = NumberStampAnnotationView(shape: currentNumberShape, color: currentColor, scale: currentStampScale, number: number)
+        s.center = p
+        
+        addAnnotation(s)
+        selectedAnnotation = s
+    }
+    
+    /// 指定された図形と色の組み合わせに対する次の番号を取得
+    private func getNextNumberForShapeAndColor(shape: NumberShape, color: UIColor) -> Int {
+        var maxNumber = 0
+        let targetColorHex = color.toHex()
+        
+        for view in overlayView.subviews {
+            if let nv = view as? NumberStampAnnotationView,
+               nv.numberShape == shape,
+               nv.stampColor.toHex() == targetColorHex {
+                maxNumber = max(maxNumber, nv.numberValue)
+            }
+        }
+        return maxNumber + 1
+    }
+    
+    /// 指定された図形と色の数字スタンプを再連番
+    func renumberNumberStamps(shape: NumberShape, color: UIColor) {
+        let targetColorHex = color.toHex()
+        
+        // 対象の図形・色のスタンプを取得
+        var targetStamps: [NumberStampAnnotationView] = []
+        for view in overlayView.subviews {
+            if let nv = view as? NumberStampAnnotationView,
+               nv.numberShape == shape,
+               nv.stampColor.toHex() == targetColorHex {
+                targetStamps.append(nv)
+            }
+        }
+        
+        // 位置順（Y優先、次にX）でソート
+        targetStamps.sort { a, b in
+            let tolerance: CGFloat = 20
+            if abs(a.center.y - b.center.y) < tolerance {
+                return a.center.x < b.center.x
+            }
+            return a.center.y < b.center.y
+        }
+        
+        // 連番振り直し
+        for (index, stamp) in targetStamps.enumerated() {
+            stamp.numberValue = index + 1
         }
     }
     
@@ -1728,4 +2105,3 @@ extension MarkupViewController: PKCanvasViewDelegate {
         isDirty = true
     }
 }
-

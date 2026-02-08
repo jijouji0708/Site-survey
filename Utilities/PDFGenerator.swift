@@ -24,9 +24,7 @@ class PDFGenerator {
     
     func generatePDF(for caseItem: Case) async -> Data? {
         let title = caseItem.title
-        let overallNote = caseItem.overallNote
         let photos = caseItem.sortedPhotos
-        let photoCount = photos.count
         let showCoverPage = caseItem.showCoverPage
         
         // 写真データを準備（isFullPage情報も含む）
