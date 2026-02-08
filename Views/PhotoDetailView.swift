@@ -192,6 +192,25 @@ struct PhotoDetailView: View {
                     currentPhoto.parentCase?.touch()
                     try? modelContext.save()
                 }
+            
+            // 1ページ表示トグル
+            HStack {
+                Image(systemName: "doc.richtext")
+                    .foregroundColor(accentGreen)
+                Text("PDFで1ページ表示")
+                    .font(.subheadline)
+                
+                Spacer()
+                
+                Toggle("", isOn: $currentPhoto.isFullPage)
+                    .labelsHidden()
+                    .tint(accentGreen)
+                    .onChange(of: currentPhoto.isFullPage) { _, _ in
+                        currentPhoto.parentCase?.touch()
+                        try? modelContext.save()
+                    }
+            }
+            .padding(.top, 4)
         }
         .padding()
         .gesture(

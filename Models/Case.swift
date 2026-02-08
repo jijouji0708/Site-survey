@@ -34,6 +34,9 @@ final class Case {
     @Relationship(deleteRule: .cascade)
     var photos: [CasePhoto] = []
     
+    @Relationship(deleteRule: .cascade)
+    var attachments: [CaseAttachment] = []
+    
     // キャッシュ付きソート済み写真
     @Transient private var _sortedPhotos: [CasePhoto]?
     var sortedPhotos: [CasePhoto] {

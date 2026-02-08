@@ -414,4 +414,59 @@ class ImageStorage {
         // 画像を描画
         image.draw(in: CGRect(x: x, y: y, width: scaledWidth, height: scaledHeight))
     }
+    
+    // MARK: - 添付ファイル管理
+    
+    private lazy var attachmentsDirectory: URL = {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let dir = docs.appendingPathComponent("attachments")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+    
+    /// PDFファイルを保存
+    func saveAttachment(from sourceURL: URL) -> String? {
+        let fileName = UUID().uuidString + ".pdf"
+        
+        // ディレクトリを確実に作成
+        let attachDir = attachmentsDirectory
+        try? FileManager.default.createDirectory(at: attachDir, withIntermediateDirectories: true)
+        
+        let destURL = attachDir.appendingPathComponent(fileName)
+        
+        do {
+            // asCopy: trueの場合、ファイルは既にコピーされているのでセキュリティスコープは不要
+            // ただし念のため試行
+            let needsSecurityScope = sourceURL.startAccessingSecurityScopedResource()
+            defer {
+                if needsSecurityScope {
+                    sourceURL.stopAccessingSecurityScopedResource()
+                }
+            }
+            
+            // ファイルが存在するか確認
+            guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+                print("Source file does not exist: \(sourceURL)")
+                return nil
+            }
+            
+            try FileManager.default.copyItem(at: sourceURL, to: destURL)
+            print("Successfully saved attachment: \(fileName)")
+            return fileName
+        } catch {
+            print("Failed to save attachment: \(error)")
+            return nil
+        }
+    }
+    
+    /// 添付ファイルのURLを取得
+    func getAttachmentURL(_ fileName: String) -> URL {
+        attachmentsDirectory.appendingPathComponent(fileName)
+    }
+    
+    /// 添付ファイルを削除
+    func deleteAttachment(_ fileName: String) {
+        let url = attachmentsDirectory.appendingPathComponent(fileName)
+        try? FileManager.default.removeItem(at: url)
+    }
 }

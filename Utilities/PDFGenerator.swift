@@ -29,13 +29,15 @@ class PDFGenerator {
         let photoCount = photos.count
         let showCoverPage = caseItem.showCoverPage
         
-        var photoDataList: [(fileName: String, note: String, drawing: Data?, textOverlay: UIImage?)] = []
+        // 写真データを準備（isFullPage情報も含む）
+        var photoDataList: [(fileName: String, note: String, drawing: Data?, textOverlay: UIImage?, isFullPage: Bool)] = []
         for photo in photos {
             photoDataList.append((
                 fileName: photo.imageFileName,
                 note: photo.note,
                 drawing: photo.markupData,
-                textOverlay: photo.textOverlay
+                textOverlay: photo.textOverlay,
+                isFullPage: photo.isFullPage
             ))
         }
         
@@ -47,26 +49,205 @@ class PDFGenerator {
             drawCoverPage(caseItem: caseItem)
         }
         
-        // 写真ページ (4枚/ページ)
-        let photosPerPage = 4
-        let totalPhotoPages = max(1, (photoDataList.count + photosPerPage - 1) / photosPerPage)
+        // 写真ページを生成（フルページと通常を順序維持しながら処理）
+        var normalPhotos: [(fileName: String, note: String, drawing: Data?, textOverlay: UIImage?, index: Int)] = []
+        var photoNumber = 1
         
-        for pageIndex in 0..<totalPhotoPages {
-            let startIndex = pageIndex * photosPerPage
-            let endIndex = min(startIndex + photosPerPage, photoDataList.count)
-            let pagePhotos = Array(photoDataList[startIndex..<endIndex])
-            
-            drawPhotoPage(
-                title: title,
-                photos: pagePhotos,
-                startNumber: startIndex + 1,
-                pageNumber: pageIndex + 1,
-                totalPages: totalPhotoPages
-            )
+        for (index, photoData) in photoDataList.enumerated() {
+            if photoData.isFullPage {
+                // まず溜まっている通常写真を出力
+                if !normalPhotos.isEmpty {
+                    drawNormalPhotoPages(title: title, photos: normalPhotos)
+                    normalPhotos.removeAll()
+                }
+                // フルページ写真を出力
+                drawFullPagePhoto(
+                    title: title,
+                    photoData: (photoData.fileName, photoData.note, photoData.drawing, photoData.textOverlay),
+                    number: photoNumber
+                )
+            } else {
+                normalPhotos.append((photoData.fileName, photoData.note, photoData.drawing, photoData.textOverlay, index))
+            }
+            photoNumber += 1
+        }
+        
+        // 残りの通常写真を出力
+        if !normalPhotos.isEmpty {
+            drawNormalPhotoPages(title: title, photos: normalPhotos)
         }
         
         UIGraphicsEndPDFContext()
-        return pdfData as Data
+        
+        // 添付PDFがある場合はマージ
+        let attachments = caseItem.attachments.sorted { $0.orderIndex < $1.orderIndex }
+        if attachments.isEmpty {
+            return pdfData as Data
+        }
+        
+        // PDFドキュメントとしてマージ
+        guard let mainPDF = PDFDocument(data: pdfData as Data) else {
+            return pdfData as Data
+        }
+        
+        for attachment in attachments {
+            let attachURL = ImageStorage.shared.getAttachmentURL(attachment.fileName)
+            if let attachPDF = PDFDocument(url: attachURL) {
+                for pageIndex in 0..<attachPDF.pageCount {
+                    if let page = attachPDF.page(at: pageIndex) {
+                        mainPDF.insert(page, at: mainPDF.pageCount)
+                    }
+                }
+            }
+        }
+        
+        return mainPDF.dataRepresentation()
+    }
+    
+    // MARK: - 通常写真ページ（4枚/ページ）
+    
+    private func drawNormalPhotoPages(
+        title: String,
+        photos: [(fileName: String, note: String, drawing: Data?, textOverlay: UIImage?, index: Int)]
+    ) {
+        let photosPerPage = 4
+        let totalPages = max(1, (photos.count + photosPerPage - 1) / photosPerPage)
+        
+        for pageIndex in 0..<totalPages {
+            let startIndex = pageIndex * photosPerPage
+            let endIndex = min(startIndex + photosPerPage, photos.count)
+            let pagePhotos = Array(photos[startIndex..<endIndex])
+            
+            let photoDataForPage = pagePhotos.map { ($0.fileName, $0.note, $0.drawing, $0.textOverlay) }
+            let startNumber = pagePhotos.first?.index ?? 0
+            
+            drawPhotoPage(
+                title: title,
+                photos: photoDataForPage,
+                startNumber: startNumber + 1,
+                pageNumber: pageIndex + 1,
+                totalPages: totalPages
+            )
+        }
+    }
+    
+    // MARK: - フルページ写真（1枚/ページ）
+    
+    private func drawFullPagePhoto(
+        title: String,
+        photoData: (fileName: String, note: String, drawing: Data?, textOverlay: UIImage?),
+        number: Int
+    ) {
+        UIGraphicsBeginPDFPage()
+        
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        
+        // ヘッダー
+        let headerY: CGFloat = 25
+        let headerAttr: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 10),
+            .foregroundColor: textLight
+        ]
+        (title as NSString).draw(at: CGPoint(x: margin, y: headerY), withAttributes: headerAttr)
+        
+        // 写真エリア（バッジ用の余白を確保）
+        let badgeInset: CGFloat = 20
+        let photoAreaY: CGFloat = 50
+        let noteAreaHeight: CGFloat = photoData.note.isEmpty ? 0 : 80
+        let photoAreaHeight = pageHeight - photoAreaY - margin - noteAreaHeight
+        let photoRect = CGRect(x: margin + badgeInset, y: photoAreaY + badgeInset, 
+                              width: pageWidth - margin * 2 - badgeInset, height: photoAreaHeight - badgeInset)
+        
+        // 画像描画
+        var drawing: PKDrawing? = nil
+        if let drawingData = photoData.drawing {
+            drawing = try? PKDrawing(data: drawingData)
+        }
+        
+        if let image = ImageStorage.shared.getImageForPDF(
+            photoData.fileName,
+            drawing: drawing,
+            textOverlay: photoData.textOverlay
+        ) {
+            context.saveGState()
+            
+            // 白背景
+            UIColor.white.setFill()
+            let bgPath = UIBezierPath(roundedRect: photoRect, cornerRadius: 6)
+            bgPath.fill()
+            
+            // アスペクト比維持して中央配置
+            let aspect = image.size.width / image.size.height
+            let targetAspect = photoRect.width / photoRect.height
+            
+            var drawRect = photoRect
+            if aspect > targetAspect {
+                let h = photoRect.width / aspect
+                drawRect = CGRect(x: photoRect.minX, y: photoRect.midY - h/2, width: photoRect.width, height: h)
+            } else {
+                let w = photoRect.height * aspect
+                drawRect = CGRect(x: photoRect.midX - w/2, y: photoRect.minY, width: w, height: photoRect.height)
+            }
+            
+            let clipPath = UIBezierPath(roundedRect: photoRect, cornerRadius: 6)
+            clipPath.addClip()
+            image.draw(in: drawRect)
+            
+            context.restoreGState()
+            
+            // 枠線
+            context.saveGState()
+            UIColor(white: 0.85, alpha: 1).setStroke()
+            let borderPath = UIBezierPath(roundedRect: photoRect, cornerRadius: 6)
+            borderPath.lineWidth = 1
+            borderPath.stroke()
+            context.restoreGState()
+        }
+        
+        // 番号バッジ（画像の左上隅に配置）
+        context.saveGState()
+        let badgeSize: CGFloat = 28
+        let badgeRect = CGRect(x: margin + 5, y: photoAreaY + 5, width: badgeSize, height: badgeSize)
+        
+        // バッジ背景
+        accentGreen.setFill()
+        let badgePath = UIBezierPath(ovalIn: badgeRect)
+        badgePath.fill()
+        
+        // 番号テキスト
+        let numStr = "\(number)"
+        let numAttr: [NSAttributedString.Key: Any] = [
+            .font: UIFont.boldSystemFont(ofSize: 14),
+            .foregroundColor: UIColor.white
+        ]
+        let numSize = numStr.size(withAttributes: numAttr)
+        (numStr as NSString).draw(at: CGPoint(x: badgeRect.midX - numSize.width/2, y: badgeRect.midY - numSize.height/2), withAttributes: numAttr)
+        context.restoreGState()
+        
+        // メモエリア
+        if !photoData.note.isEmpty {
+            let noteY = photoRect.maxY + 10
+            let noteRect = CGRect(x: margin, y: noteY, width: pageWidth - margin * 2, height: noteAreaHeight - 20)
+            
+            context.saveGState()
+            let notePath = UIBezierPath(roundedRect: noteRect, cornerRadius: 6)
+            UIColor(white: 0.96, alpha: 1).setFill()
+            notePath.fill()
+            context.restoreGState()
+            
+            let para = NSMutableParagraphStyle()
+            para.alignment = .left
+            para.lineBreakMode = .byWordWrapping
+            
+            let noteAttr: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 11),
+                .foregroundColor: textDark,
+                .paragraphStyle: para
+            ]
+            
+            let noteInsetRect = noteRect.insetBy(dx: 10, dy: 8)
+            (photoData.note as NSString).draw(in: noteInsetRect, withAttributes: noteAttr)
+        }
     }
     
     // MARK: - 表紙（シンプル版）

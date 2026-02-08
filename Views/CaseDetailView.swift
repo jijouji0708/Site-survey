@@ -13,6 +13,7 @@ import UniformTypeIdentifiers
 import VisionKit
 import PencilKit
 import Photos
+import PDFKit
 
 enum PhotoViewMode {
     case grid
@@ -50,6 +51,17 @@ struct CaseDetailView: View {
     @State private var selectedPhotosForCompose: Set<UUID> = []
     @State private var showComposeConfirmAlert = false
     
+    // PDF添付
+    @State private var showDocumentPicker = false
+    @State private var attachmentToDelete: CaseAttachment?
+    @State private var showAttachmentDeleteAlert = false
+    
+    // PDF取込（写真化）
+    @State private var showPDFImportPicker = false
+    @State private var isImportingPDF = false
+    @State private var pdfImportFailedFiles: [String] = []
+    @State private var showPDFImportFailedAlert = false
+    
     // アクセントカラー（緑）- 仕様: Color(red: 0.2, green: 0.78, blue: 0.35)
     private let accentGreen = Color(red: 0.2, green: 0.78, blue: 0.35)
     private let maxPhotos = 50
@@ -78,6 +90,9 @@ struct CaseDetailView: View {
                 
                 // 写真グリッド
                 photoGridSection
+                
+                // 添付PDFセクション
+                attachmentSection
             }
             .padding()
         }
@@ -206,6 +221,35 @@ struct CaseDetailView: View {
             }
         } message: {
             Text("\(selectedPhotosForCompose.count)枚の写真を1枚に結合します。元の写真は削除されます。")
+        }
+        .sheet(isPresented: $showDocumentPicker) {
+            DocumentPickerView { urls in
+                for url in urls {
+                    addAttachment(from: url)
+                }
+            }
+        }
+        .alert("添付ファイルを削除", isPresented: $showAttachmentDeleteAlert) {
+            Button("キャンセル", role: .cancel) {}
+            Button("削除", role: .destructive) {
+                if let attachment = attachmentToDelete {
+                    deleteAttachment(attachment)
+                }
+            }
+        } message: {
+            Text("この添付ファイルを削除してもよろしいですか？")
+        }
+        .sheet(isPresented: $showPDFImportPicker) {
+            DocumentPickerView { urls in
+                Task {
+                    await importPDFAsPhotos(urls: urls)
+                }
+            }
+        }
+        .alert("PDF取込エラー", isPresented: $showPDFImportFailedAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("以下のファイルは取り込めませんでした（パスワード保護または破損の可能性）:\n\(pdfImportFailedFiles.joined(separator: "\n"))")
         }
     }
     
@@ -373,9 +417,33 @@ struct CaseDetailView: View {
                     }
                     .disabled(isAtLimit)
                 }
+                
+                // PDF取込（写真として取り込み）
+                Button(action: {
+                    showPDFImportPicker = true
+                }) {
+                    Label("PDF", systemImage: "doc.fill")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(isAtLimit ? Color(.systemGray4) : Color(.systemGray5))
+                        .cornerRadius(8)
+                }
+                .disabled(isAtLimit || isImportingPDF)
             }
             .foregroundColor(isAtLimit ? .gray : accentGreen)
             .font(.caption.bold())
+            
+            // インポート中表示
+            if isImportingPDF {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text("PDFを取り込み中...")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
         }
     }
     
@@ -1303,6 +1371,284 @@ struct DocumentScanner: UIViewControllerRepresentable {
         
         func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFailWithError error: Error) {
             print("Scan error: \(error)")
+            parent.dismiss()
+        }
+    }
+}
+
+// MARK: - 添付PDFセクション
+
+extension CaseDetailView {
+    private var attachmentSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("添付ファイル")
+                    .font(.headline)
+                
+                Text("\(caseItem.attachments.count)件")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                
+                Spacer()
+                
+                Button(action: { showDocumentPicker = true }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "plus")
+                        Text("PDF追加")
+                    }
+                    .font(.subheadline.weight(.medium))
+                    .foregroundColor(accentGreen)
+                }
+            }
+            
+            if caseItem.attachments.isEmpty {
+                Text("PDFファイルを追加できます")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 8)
+            } else {
+                ForEach(sortedAttachments, id: \.id) { attachment in
+                    AttachmentRow(
+                        attachment: attachment,
+                        onDelete: {
+                            attachmentToDelete = attachment
+                            showAttachmentDeleteAlert = true
+                        }
+                    )
+                }
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .cornerRadius(12)
+    }
+    
+    private var sortedAttachments: [CaseAttachment] {
+        caseItem.attachments.sorted { $0.orderIndex < $1.orderIndex }
+    }
+    
+    private func addAttachment(from url: URL) {
+        guard let fileName = ImageStorage.shared.saveAttachment(from: url) else { return }
+        
+        let attachment = CaseAttachment(
+            fileName: fileName,
+            originalName: url.lastPathComponent,
+            orderIndex: caseItem.attachments.count
+        )
+        attachment.parentCase = caseItem
+        caseItem.attachments.append(attachment)
+        caseItem.touch()
+        try? modelContext.save()
+    }
+    
+    private func deleteAttachment(_ attachment: CaseAttachment) {
+        ImageStorage.shared.deleteAttachment(attachment.fileName)
+        caseItem.attachments.removeAll { $0.id == attachment.id }
+        modelContext.delete(attachment)
+        caseItem.touch()
+        try? modelContext.save()
+    }
+    
+    // MARK: - PDF取込（写真化）
+    
+    @MainActor
+    private func importPDFAsPhotos(urls: [URL]) async {
+        isImportingPDF = true
+        defer { isImportingPDF = false }
+        
+        let remainingSlots = maxPhotos - caseItem.photos.count
+        var importedCount = 0
+        var failedFiles: [String] = []
+        
+        print("PDF Import: Starting with \(urls.count) URLs")
+        
+        for url in urls {
+            let fileName = url.lastPathComponent
+            print("PDF Import: Processing \(fileName)")
+            
+            // asCopy: trueなのでセキュリティスコープは不要だが念のため
+            let hasAccess = url.startAccessingSecurityScopedResource()
+            defer {
+                if hasAccess {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+            
+            // ファイルの存在確認
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                print("PDF Import: File does not exist at \(url.path)")
+                failedFiles.append("\(fileName) (ファイルが見つかりません)")
+                continue
+            }
+            
+            // PDFドキュメントを読み込み - まずData経由で試行（より信頼性が高い）
+            var pdfDoc: PDFDocument?
+            
+            if let data = try? Data(contentsOf: url) {
+                pdfDoc = PDFDocument(data: data)
+                if pdfDoc == nil {
+                    print("PDF Import: Failed to create PDFDocument from Data")
+                }
+            }
+            
+            // Data経由で失敗した場合はURL経由で試行
+            if pdfDoc == nil {
+                pdfDoc = PDFDocument(url: url)
+            }
+            
+            guard let loadedPDF = pdfDoc else {
+                print("PDF Import: Failed to load PDF \(fileName)")
+                failedFiles.append("\(fileName) (読み込み失敗)")
+                continue
+            }
+            
+            // ロック/暗号化チェック
+            if loadedPDF.isLocked {
+                print("PDF Import: PDF is locked \(fileName)")
+                failedFiles.append("\(fileName) (パスワード保護)")
+                continue
+            }
+            
+            // ページ数チェック
+            if loadedPDF.pageCount == 0 {
+                print("PDF Import: PDF has no pages \(fileName)")
+                failedFiles.append("\(fileName) (ページなし)")
+                continue
+            }
+            
+            print("PDF Import: Loaded PDF with \(loadedPDF.pageCount) pages")
+            await processPages(from: loadedPDF, remainingSlots: remainingSlots, importedCount: &importedCount)
+            
+            if importedCount >= remainingSlots { break }
+        }
+        
+        print("PDF Import: Completed, imported \(importedCount) pages")
+        
+        // 失敗したファイルがある場合は通知
+        if !failedFiles.isEmpty {
+            pdfImportFailedFiles = failedFiles
+            showPDFImportFailedAlert = true
+        }
+    }
+    
+    @MainActor
+    private func processPages(from pdfDoc: PDFDocument, remainingSlots: Int, importedCount: inout Int) async {
+        for pageIndex in 0..<pdfDoc.pageCount {
+            guard importedCount < remainingSlots else { break }
+            guard let page = pdfDoc.page(at: pageIndex) else { continue }
+            
+            // 300 DPIでレンダリング（高品質）
+            let pageRect = page.bounds(for: .mediaBox)
+            let scale: CGFloat = 300.0 / 72.0  // PDF標準72dpi → 300dpi
+            let renderSize = CGSize(
+                width: pageRect.width * scale,
+                height: pageRect.height * scale
+            )
+            
+            // 画像生成
+            let renderer = UIGraphicsImageRenderer(size: renderSize)
+            let image = renderer.image { ctx in
+                UIColor.white.setFill()
+                ctx.fill(CGRect(origin: .zero, size: renderSize))
+                
+                ctx.cgContext.translateBy(x: 0, y: renderSize.height)
+                ctx.cgContext.scaleBy(x: scale, y: -scale)
+                
+                page.draw(with: .mediaBox, to: ctx.cgContext)
+            }
+            
+            // 写真として保存
+            addPhoto(image)
+            importedCount += 1
+            print("PDF Import: Added page \(pageIndex + 1)")
+        }
+    }
+}
+
+// MARK: - 添付ファイル行
+
+struct AttachmentRow: View {
+    let attachment: CaseAttachment
+    let onDelete: () -> Void
+    
+    @State private var showPreview = false
+    
+    var body: some View {
+        HStack {
+            Image(systemName: "doc.fill")
+                .foregroundColor(.red)
+                .font(.title2)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(attachment.originalName)
+                    .font(.subheadline)
+                    .lineLimit(1)
+                
+                Text(formattedDate)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            Button(action: onDelete) {
+                Image(systemName: "trash")
+                    .foregroundColor(.red)
+            }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .background(Color(.systemGray6))
+        .cornerRadius(8)
+        .onTapGesture {
+            showPreview = true
+        }
+        .sheet(isPresented: $showPreview) {
+            let url = ImageStorage.shared.getAttachmentURL(attachment.fileName)
+            PDFPreviewView(url: url)
+        }
+    }
+    
+    private var formattedDate: String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter.string(from: attachment.createdAt)
+    }
+}
+
+// MARK: - Document Picker
+
+struct DocumentPickerView: UIViewControllerRepresentable {
+    let onPick: ([URL]) -> Void
+    @Environment(\.dismiss) private var dismiss
+    
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.pdf], asCopy: true)
+        picker.allowsMultipleSelection = true
+        picker.delegate = context.coordinator
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let parent: DocumentPickerView
+        
+        init(_ parent: DocumentPickerView) {
+            self.parent = parent
+        }
+        
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            parent.onPick(urls)
+            parent.dismiss()
+        }
+        
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
             parent.dismiss()
         }
     }

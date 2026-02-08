@@ -33,6 +33,9 @@ final class CasePhoto {
     // 結合元の画像ファイル名（解除時に復元用）
     var sourceImageFileNames: [String]? = nil
     
+    // 1ページ表示フラグ（PDFで1枚1ページで表示）
+    var isFullPage: Bool = false
+    
     var parentCase: Case?
     
     // PKDrawing アクセサ
