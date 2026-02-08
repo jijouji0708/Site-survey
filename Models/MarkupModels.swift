@@ -7,13 +7,86 @@ struct MarkupData: Codable {
     var texts: [TextAnnotationModel] = []
     var arrows: [ArrowAnnotationModel] = []
     var shapes: [ShapeAnnotationModel] = []
+    var stamps: [StampAnnotationModel] = []
     
     /// 90度右回転した新しいMarkupDataを返す
     func rotated90Clockwise() -> MarkupData {
         return MarkupData(
             texts: texts.map { $0.rotated90Clockwise() },
             arrows: arrows.map { $0.rotated90Clockwise() },
-            shapes: shapes.map { $0.rotated90Clockwise() }
+            shapes: shapes.map { $0.rotated90Clockwise() },
+            stamps: stamps.map { $0.rotated90Clockwise() }
+        )
+    }
+}
+
+// MARK: - Stamp Types
+
+enum StampType: String, Codable, CaseIterable {
+    // 記号 (Symbols) - 10 items
+    case check = "✓"
+    case cross = "✗"
+    case circle = "○"
+    case triangle = "△"
+    case star = "★"
+    case target = "◎"
+    case arrowUp = "↑"
+    case arrowRight = "→"
+    case arrowDown = "↓"
+    case arrowLeft = "←"
+    
+    // テキスト (Text) - 5 items
+    case ok = "OK"
+    case ng = "NG"
+    case new = "NEW"
+    case before = "BEFORE"
+    case after = "AFTER"
+    
+    // 絵文字 (Emoji) - 4 items
+    case warning = "⚠️"
+    case prohibited = "🚫"
+    case locked = "🔒"
+    case pin = "📍"
+    
+    var displayText: String { rawValue }
+    
+    var category: String {
+        switch self {
+        case .check, .cross, .circle, .triangle, .star, .target,
+             .arrowUp, .arrowRight, .arrowDown, .arrowLeft:
+            return "記号"
+        case .ok, .ng, .new, .before, .after:
+            return "テキスト"
+        case .warning, .prohibited, .locked, .pin:
+            return "絵文字"
+        }
+    }
+}
+
+struct StampAnnotationModel: Codable, Identifiable {
+    var id: UUID = UUID()
+    var stampType: StampType
+    
+    // Normalized Coordinates (0.0 - 1.0 relative to Image)
+    var x: CGFloat
+    var y: CGFloat
+    
+    var colorHex: String
+    var scale: CGFloat = 1.0 // サイズ倍率
+    
+    var uicolor: UIColor {
+        return UIColor(hex: colorHex) ?? .red
+    }
+    
+    /// 90度右回転した新しいモデルを返す
+    func rotated90Clockwise() -> StampAnnotationModel {
+        return StampAnnotationModel(
+            id: id,
+            stampType: stampType,
+            x: 1 - y,
+            y: x,
+            colorHex: colorHex,
+            scale: scale
         )
     }
 }

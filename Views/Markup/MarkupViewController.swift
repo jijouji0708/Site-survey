@@ -5,7 +5,7 @@ import AVFoundation
 // MARK: - Enums & Protocols
 
 enum MarkupTool: Int, CaseIterable {
-    case pen, marker, eraser, text, arrow, rect, circle
+    case pen, marker, eraser, text, arrow, rect, circle, stamp
 }
 
 // MARK: - Views (Internal)
@@ -116,6 +116,62 @@ class TextAnnotationView: BaseAnnotationView {
     
     override func updateSelectionState() {
         super.updateSelectionState() // Trigger Base delete button logic
+        bgView.isHidden = !isSelected
+        bgView.layer.borderColor = isSelected ? UIColor.green.cgColor : UIColor.clear.cgColor
+        bgView.layer.borderWidth = isSelected ? 2 : 0
+    }
+}
+
+class StampAnnotationView: BaseAnnotationView {
+    var stampType: StampType { didSet { label.text = stampType.displayText; sizeToFit() } }
+    var stampColor: UIColor { didSet { label.textColor = stampColor } }
+    var scale: CGFloat { didSet { updateFontSize(); sizeToFit() } }
+    
+    private let label = UILabel()
+    private let bgView = UIView()
+    private let baseSize: CGFloat = 32
+    
+    init(id: UUID = UUID(), stampType: StampType, color: UIColor, scale: CGFloat = 1.0) {
+        self.stampType = stampType
+        self.stampColor = color
+        self.scale = scale
+        super.init(id: id, frame: .zero)
+        sizeToFit()
+    }
+    
+    required init?(coder: NSCoder) { fatalError() }
+    
+    override func setupView() {
+        addSubview(bgView)
+        addSubview(label)
+        
+        label.textAlignment = .center
+        label.text = stampType.displayText
+        updateFontSize()
+        label.textColor = stampColor
+        
+        bgView.backgroundColor = UIColor.white.withAlphaComponent(0.5)
+        bgView.layer.cornerRadius = 6
+        bgView.isHidden = true
+    }
+    
+    private func updateFontSize() {
+        label.font = .systemFont(ofSize: baseSize * scale, weight: .bold)
+    }
+    
+    override func sizeToFit() {
+        let size = label.sizeThatFits(CGSize(width: 500, height: 500))
+        frame.size = CGSize(width: size.width + 16, height: size.height + 12)
+    }
+    
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        bgView.frame = bounds
+        label.frame = bounds.insetBy(dx: 8, dy: 6)
+    }
+    
+    override func updateSelectionState() {
+        super.updateSelectionState()
         bgView.isHidden = !isSelected
         bgView.layer.borderColor = isSelected ? UIColor.green.cgColor : UIColor.clear.cgColor
         bgView.layer.borderWidth = isSelected ? 2 : 0
@@ -457,6 +513,8 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     private var currentArrowStyle: ArrowStyle = .oneWay
     private var currentMarkerWidth: CGFloat = 10 // Default Thin
     private var currentPenWidth: CGFloat = 1 // Default Medium
+    private var currentStamp: StampType = .check
+    private var currentStampScale: CGFloat = 0.5 // Default Small
     
     private var lastLayoutRect: CGRect = .zero
     private var isDataLoaded = false
@@ -642,6 +700,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         case .arrow: toolName = "矢印"; iconName = "arrow.up.right"
         case .rect: toolName = "四角形"; iconName = "rectangle"
         case .circle: toolName = "円"; iconName = "circle"
+        case .stamp: toolName = "スタンプ"; iconName = "seal"
         }
         
         // Set icon and tool name
@@ -724,7 +783,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
             canvasView.isUserInteractionEnabled = true
             overlayView.isUserInteractionEnabled = true // Allow tap to delete
             overlayView.isEraserMode = true
-        case .text, .arrow, .rect, .circle:
+        case .text, .arrow, .rect, .circle, .stamp:
             canvasView.tool = PKInkingTool(.pen, color: .clear, width: 0)
             canvasView.isUserInteractionEnabled = false
             overlayView.isUserInteractionEnabled = true
@@ -754,6 +813,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         var texts: [TextAnnotationModel] = []
         var arrows: [ArrowAnnotationModel] = []
         var shapes: [ShapeAnnotationModel] = []
+        var stamps: [StampAnnotationModel] = []
         
         for view in overlayView.subviews {
             if let tv = view as? TextAnnotationView {
@@ -797,10 +857,21 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
                     colorHex: sv.color.toHex(),
                     lineWidth: sv.lineWidth
                 ))
+            } else if let stamp = view as? StampAnnotationView {
+                let normX = (stamp.center.x - rect.minX) / rect.width
+                let normY = (stamp.center.y - rect.minY) / rect.height
+                
+                stamps.append(StampAnnotationModel(
+                    id: stamp.id,
+                    stampType: stamp.stampType,
+                    x: normX, y: normY,
+                    colorHex: stamp.stampColor.toHex(),
+                    scale: stamp.scale
+                ))
             }
         }
         
-        let data = MarkupData(texts: texts, arrows: arrows, shapes: shapes)
+        let data = MarkupData(texts: texts, arrows: arrows, shapes: shapes, stamps: stamps)
         
         // Render Image
         let renderer = UIGraphicsImageRenderer(size: image.size)
@@ -897,6 +968,22 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
                 path.lineWidth = s.lineWidth * (1.0 / scale)
                 path.stroke()
             }
+            
+            for stamp in stamps {
+                let centerX = stamp.x * image.size.width
+                let centerY = stamp.y * image.size.height
+                let fontSize = 32 * stamp.scale / scale
+                
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: fontSize, weight: .bold),
+                    .foregroundColor: stamp.uicolor
+                ]
+                
+                let text = stamp.stampType.displayText
+                let size = text.size(withAttributes: attrs)
+                let origin = CGPoint(x: centerX - size.width / 2, y: centerY - size.height / 2)
+                text.draw(at: origin, withAttributes: attrs)
+            }
         }
         
         onSave?(savedDrawing, data, overlayImage)
@@ -957,6 +1044,11 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         // Create Text if tool is text
         if currentTool == .text {
             createText(at: p)
+        }
+        
+        // Create Stamp if tool is stamp
+        if currentTool == .stamp {
+            createStamp(at: p)
         }
     }
     
@@ -1212,6 +1304,13 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         startEditingText(for: t)
     }
     
+    func createStamp(at p: CGPoint) {
+        let s = StampAnnotationView(stampType: currentStamp, color: currentColor, scale: currentStampScale)
+        s.center = p
+        addAnnotation(s)
+        selectedAnnotation = s
+    }
+    
     func startEditingText(for view: TextAnnotationView) {
         // Prevent double edit
         if activeTextView != nil { endEditingText() }
@@ -1430,6 +1529,21 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
             
             overlayView.addSubview(v)
         }
+        
+        for stamp in data.stamps {
+            let centerX = stamp.x * rect.width + rect.minX
+            let centerY = stamp.y * rect.height + rect.minY
+            
+            let v = StampAnnotationView(id: stamp.id, stampType: stamp.stampType, color: stamp.uicolor, scale: stamp.scale)
+            v.center = CGPoint(x: centerX, y: centerY)
+            
+            v.onDelete = { [weak self] in
+                self?.deleteAnnotation(v)
+                self?.selectedAnnotation = nil
+            }
+            
+            overlayView.addSubview(v)
+        }
     }
     
     func didSelectTool(_ tool: MarkupTool) {
@@ -1483,6 +1597,22 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         }
     }
     
+    func didSelectStamp(_ stamp: StampType) {
+        currentStamp = stamp
+        // 選択されたスタンプ注釈があれば更新
+        if let stampView = selectedAnnotation as? StampAnnotationView {
+            stampView.stampType = stamp
+        }
+    }
+    
+    func didSelectStampScale(_ scale: CGFloat) {
+        currentStampScale = scale
+        // 選択されたスタンプ注釈があれば更新
+        if let stampView = selectedAnnotation as? StampAnnotationView {
+            stampView.scale = scale
+        }
+    }
+    
     // MARK: - Toolbar Synchronization
     
     func updateToolbarForSelection(_ selection: BaseAnnotationView?) {
@@ -1512,6 +1642,13 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
             currentColor = sv.color
             
             toolbar.selectTool(sv.shapeType, notifyDelegate: false)
+            toolbar.selectColor(currentColor, notifyDelegate: false)
+        } else if let stamp = selection as? StampAnnotationView {
+            currentTool = .stamp
+            currentColor = stamp.stampColor
+            currentStamp = stamp.stampType
+            
+            toolbar.selectTool(.stamp, notifyDelegate: false)
             toolbar.selectColor(currentColor, notifyDelegate: false)
         }
         

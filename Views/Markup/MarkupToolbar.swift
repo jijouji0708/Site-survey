@@ -7,6 +7,8 @@ protocol MarkupToolbarDelegate: AnyObject {
     func didSelectArrowStyle(_ style: ArrowStyle)
     func didSelectMarkerWidth(_ width: CGFloat)
     func didSelectPenWidth(_ width: CGFloat)
+    func didSelectStamp(_ stamp: StampType)
+    func didSelectStampScale(_ scale: CGFloat)
 }
 
 class MarkupToolbar: UIView {
@@ -60,6 +62,25 @@ class MarkupToolbar: UIView {
     
     private let penWidthSelectionIndicator = UIView()
     private weak var penWidthStackRef: UIStackView?
+    
+    // Stamp Selection
+    private var selectedStamp: StampType = .check
+    private weak var stampContainerRef: UIView?
+    private var stampButtons: [StampType: UIButton] = [:]
+    private weak var stampGridRef: UIStackView?
+    private var orderedStampButtons: [UIButton] = []
+    
+    // Stamp Size
+    private var selectedStampScale: CGFloat = 0.5 // Default Small
+    private var orderedStampScales: [CGFloat] = [0.5, 1.0] // Small, Large
+    private var stampScaleButtons: [UIButton] = []
+    private weak var stampScaleStackRef: UIStackView?
+    
+    // Stamp Panel Collapse
+    private var isStampPanelExpanded = false
+    private weak var stampExpandedContentRef: UIStackView?
+    private weak var stampToggleButtonRef: UIButton?
+    private var stampContainerHeightConstraint: NSLayoutConstraint?
     
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -201,6 +222,165 @@ class MarkupToolbar: UIView {
             penWidthButtons.append(btn)
         }
         
+        // Stamp Selection Panel (collapsible, default expanded)
+        let stampContainer = UIView()
+        stampContainer.isHidden = true
+        stampContainer.alpha = 0
+        mainStack.addArrangedSubview(stampContainer)
+        let heightConstraint = stampContainer.heightAnchor.constraint(equalToConstant: 170) // Expanded height
+        heightConstraint.isActive = true
+        self.stampContainerHeightConstraint = heightConstraint
+        self.stampContainerRef = stampContainer
+        
+        // Outer stack: toggle button row + grid + size buttons
+        let outerStack = UIStackView()
+        outerStack.axis = .vertical
+        outerStack.spacing = 4
+        outerStack.distribution = .fill
+        outerStack.translatesAutoresizingMaskIntoConstraints = false
+        stampContainer.addSubview(outerStack)
+        
+        NSLayoutConstraint.activate([
+            outerStack.leadingAnchor.constraint(equalTo: stampContainer.leadingAnchor),
+            outerStack.trailingAnchor.constraint(equalTo: stampContainer.trailingAnchor),
+            outerStack.topAnchor.constraint(equalTo: stampContainer.topAnchor),
+            outerStack.bottomAnchor.constraint(equalTo: stampContainer.bottomAnchor)
+        ])
+        
+        // Toggle button row (small, right-aligned)
+        let toggleRow = UIStackView()
+        toggleRow.axis = .horizontal
+        toggleRow.distribution = .fill
+        toggleRow.heightAnchor.constraint(equalToConstant: 20).isActive = true
+        outerStack.addArrangedSubview(toggleRow)
+        
+        let toggleSpacer = UIView()
+        toggleRow.addArrangedSubview(toggleSpacer)
+        
+        let toggleBtn = UIButton()
+        toggleBtn.setImage(UIImage(systemName: "chevron.up"), for: .normal)
+        toggleBtn.tintColor = UIColor.white.withAlphaComponent(0.6)
+        toggleBtn.contentHorizontalAlignment = .right
+        toggleBtn.addAction(UIAction { [weak self] _ in self?.toggleStampPanel() }, for: .touchUpInside)
+        toggleBtn.widthAnchor.constraint(equalToConstant: 40).isActive = true
+        toggleRow.addArrangedSubview(toggleBtn)
+        self.stampToggleButtonRef = toggleBtn
+        
+        // Expandable content stack (grid + separator + size)
+        let expandedContent = UIStackView()
+        expandedContent.axis = .vertical
+        expandedContent.spacing = 4
+        expandedContent.distribution = .fill
+        expandedContent.isHidden = false // Default: expanded
+        outerStack.addArrangedSubview(expandedContent)
+        self.stampExpandedContentRef = expandedContent
+        
+        // Grid container for stamps (categorized rows)
+        let gridStack = UIStackView()
+        gridStack.axis = .vertical
+        gridStack.spacing = 4
+        gridStack.distribution = .fillEqually
+        expandedContent.addArrangedSubview(gridStack)
+        self.stampGridRef = gridStack
+        
+        // Group stamps by category
+        let allStamps = StampType.allCases
+        let symbolStamps = allStamps.filter { $0.category == "記号" }  // 10 items -> 2 rows
+        let textStamps = allStamps.filter { $0.category == "テキスト" }  // 5 items -> 1 row
+        let emojiStamps = allStamps.filter { $0.category == "絵文字" }  // 4 items -> 1 row
+        
+        // Helper to create a row of stamps
+        func createStampRow(stamps: [StampType], maxPerRow: Int) -> UIStackView {
+            let rowStack = UIStackView()
+            rowStack.axis = .horizontal
+            rowStack.spacing = 4
+            rowStack.distribution = .fillEqually
+            
+            for stamp in stamps {
+                let btn = UIButton()
+                btn.setTitle(stamp.displayText, for: .normal)
+                btn.titleLabel?.font = .systemFont(ofSize: 14)
+                btn.titleLabel?.adjustsFontSizeToFitWidth = true
+                btn.titleLabel?.minimumScaleFactor = 0.5
+                btn.titleLabel?.lineBreakMode = .byClipping
+                btn.backgroundColor = UIColor.white.withAlphaComponent(0.1)
+                btn.layer.cornerRadius = 4
+                btn.clipsToBounds = true
+                btn.addAction(UIAction { [weak self] _ in self?.selectStamp(stamp) }, for: .touchUpInside)
+                rowStack.addArrangedSubview(btn)
+                stampButtons[stamp] = btn
+                orderedStampButtons.append(btn)
+            }
+            
+            // Fill remaining with spacers
+            let remaining = maxPerRow - stamps.count
+            if remaining > 0 {
+                for _ in 0..<remaining {
+                    let spacer = UIView()
+                    spacer.backgroundColor = .clear
+                    rowStack.addArrangedSubview(spacer)
+                }
+            }
+            
+            return rowStack
+        }
+        
+        // Row 1: Symbols (first 5)
+        gridStack.addArrangedSubview(createStampRow(stamps: Array(symbolStamps.prefix(5)), maxPerRow: 5))
+        // Row 2: Symbols (next 5)
+        gridStack.addArrangedSubview(createStampRow(stamps: Array(symbolStamps.suffix(5)), maxPerRow: 5))
+        // Row 3: Text
+        gridStack.addArrangedSubview(createStampRow(stamps: textStamps, maxPerRow: 5))
+        // Row 4: Emoji
+        gridStack.addArrangedSubview(createStampRow(stamps: emojiStamps, maxPerRow: 5))
+        
+        // Add pan gesture for swipe selection
+        let stampPan = UIPanGestureRecognizer(target: self, action: #selector(handleStampPan(_:)))
+        stampContainer.addGestureRecognizer(stampPan)
+        
+        // Separator line
+        let stampSeparator = UIView()
+        stampSeparator.backgroundColor = UIColor.white.withAlphaComponent(0.2)
+        stampSeparator.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        expandedContent.addArrangedSubview(stampSeparator)
+        
+        // Stamp Size Selection Stack (S/L only)
+        let stampScaleStack = UIStackView()
+        stampScaleStack.axis = .horizontal
+        stampScaleStack.spacing = 8
+        stampScaleStack.distribution = .fillEqually
+        stampScaleStack.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        stampScaleStack.isUserInteractionEnabled = true
+        expandedContent.addArrangedSubview(stampScaleStack)
+        self.stampScaleStackRef = stampScaleStack
+        
+        // Add pan gesture for swipe scale selection
+        let scalePan = UIPanGestureRecognizer(target: self, action: #selector(handleStampScalePan(_:)))
+        stampScaleStack.addGestureRecognizer(scalePan)
+        
+        let scaleConfigs: [(CGFloat, String)] = [
+            (0.5, "S"),
+            (1.0, "L")
+        ]
+        
+        for (scale, label) in scaleConfigs {
+            let btn = UIButton()
+            btn.setTitle(label, for: .normal)
+            btn.titleLabel?.font = .systemFont(ofSize: 14, weight: .bold)
+            btn.backgroundColor = UIColor.white.withAlphaComponent(0.1)
+            btn.layer.cornerRadius = 4
+            btn.addAction(UIAction { [weak self] _ in self?.selectStampScale(scale) }, for: .touchUpInside)
+            stampScaleStack.addArrangedSubview(btn)
+            stampScaleButtons.append(btn)
+        }
+        
+        // Set initial: expanded
+        isStampPanelExpanded = true
+        
+        // Set initial selection highlight
+        updateStampSelectionUI()
+        updateStampScaleUI()
+        
         // arrowStyleStack implementation follows...
 
         
@@ -248,7 +428,8 @@ class MarkupToolbar: UIView {
             (.text, "textformat"),
             (.arrow, "arrow.up.right"),
             (.rect, "rectangle"),
-            (.circle, "circle")
+            (.circle, "circle"),
+            (.stamp, "seal")
         ]
         
         for (tool, icon) in tools {
@@ -457,12 +638,14 @@ class MarkupToolbar: UIView {
         let isArrow = (tool == .arrow)
         let isMarker = (tool == .marker)
         let isPen = (tool == .pen)
+        let isStamp = (tool == .stamp)
         
         // Step 1: Set hidden state IMMEDIATELY (no animation)
         textSizeStackRef?.isHidden = !isText
         arrowStyleStackRef?.isHidden = !isArrow
         markerWidthStackRef?.isHidden = !isMarker
         penWidthStackRef?.isHidden = !isPen
+        stampContainerRef?.isHidden = !isStamp
         
         // Step 2: Force layout update BEFORE reading frame values
         setNeedsLayout()
@@ -477,6 +660,7 @@ class MarkupToolbar: UIView {
             self.arrowStyleStackRef?.alpha = isArrow ? 1.0 : 0.0
             self.markerWidthStackRef?.alpha = isMarker ? 1.0 : 0.0
             self.penWidthStackRef?.alpha = isPen ? 1.0 : 0.0
+            self.stampContainerRef?.alpha = isStamp ? 1.0 : 0.0
         }
     }
     
@@ -510,6 +694,129 @@ class MarkupToolbar: UIView {
             delegate?.didSelectPenWidth(width)
         }
         updateUI(animated: true)
+    }
+    
+    func selectStamp(_ stamp: StampType) {
+        selectedStamp = stamp
+        delegate?.didSelectStamp(stamp)
+        updateStampSelectionUI()
+        updateStampHeaderLabel()
+        // ハプティックフィードバック
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+    
+    private func toggleStampPanel() {
+        isStampPanelExpanded.toggle()
+        
+        UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseInOut) {
+            self.stampExpandedContentRef?.isHidden = !self.isStampPanelExpanded
+            self.stampContainerHeightConstraint?.constant = self.isStampPanelExpanded ? 170 : 24
+            
+            // Rotate toggle button (up when expanded, down when collapsed)
+            let angle: CGFloat = self.isStampPanelExpanded ? 0 : .pi
+            self.stampToggleButtonRef?.transform = CGAffineTransform(rotationAngle: angle)
+            
+            self.superview?.layoutIfNeeded()
+        }
+        
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+    
+    private func updateStampHeaderLabel() {
+        // Find and update the header label
+        if let container = stampContainerRef,
+           let outerStack = container.subviews.first as? UIStackView,
+           let headerStack = outerStack.arrangedSubviews.first as? UIStackView,
+           let label = headerStack.arrangedSubviews.first as? UILabel {
+            label.text = "スタンプ: \(selectedStamp.displayText)"
+        }
+    }
+    
+    private func updateStampSelectionUI() {
+        let accentGreen = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0)
+        
+        UIView.animate(withDuration: 0.15) {
+            for (stamp, btn) in self.stampButtons {
+                if stamp == self.selectedStamp {
+                    btn.backgroundColor = accentGreen
+                    btn.transform = CGAffineTransform(scaleX: 1.1, y: 1.1)
+                } else {
+                    btn.backgroundColor = UIColor.white.withAlphaComponent(0.1)
+                    btn.transform = .identity
+                }
+            }
+        }
+    }
+    
+    func selectStampScale(_ scale: CGFloat) {
+        selectedStampScale = scale
+        delegate?.didSelectStampScale(scale)
+        updateStampScaleUI()
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+    
+    private func updateStampScaleUI() {
+        let accentGreen = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0)
+        
+        UIView.animate(withDuration: 0.15) {
+            for (index, btn) in self.stampScaleButtons.enumerated() {
+                let scale = self.orderedStampScales[index]
+                if scale == self.selectedStampScale {
+                    btn.backgroundColor = accentGreen
+                } else {
+                    btn.backgroundColor = UIColor.white.withAlphaComponent(0.1)
+                }
+            }
+        }
+    }
+    
+    @objc private func handleStampPan(_ gesture: UIPanGestureRecognizer) {
+        guard let container = stampContainerRef else { return }
+        let location = gesture.location(in: container)
+        
+        // Find stamp button under finger
+        let allStamps = StampType.allCases
+        for (index, btn) in orderedStampButtons.enumerated() {
+            let btnFrame = btn.convert(btn.bounds, to: container)
+            if btnFrame.contains(location) {
+                let stamp = allStamps[index]
+                if stamp != selectedStamp {
+                    selectedStamp = stamp
+                    updateStampSelectionUI()
+                    UISelectionFeedbackGenerator().selectionChanged()
+                }
+                break
+            }
+        }
+        
+        // On gesture end, notify delegate
+        if gesture.state == .ended || gesture.state == .cancelled {
+            delegate?.didSelectStamp(selectedStamp)
+        }
+    }
+    
+    @objc private func handleStampScalePan(_ gesture: UIPanGestureRecognizer) {
+        guard let stack = stampScaleStackRef else { return }
+        let location = gesture.location(in: stack)
+        
+        // Find which scale button is under finger
+        for (index, btn) in stampScaleButtons.enumerated() {
+            let btnFrame = btn.frame
+            if btnFrame.contains(location) {
+                let scale = orderedStampScales[index]
+                if scale != selectedStampScale {
+                    selectedStampScale = scale
+                    updateStampScaleUI()
+                    UISelectionFeedbackGenerator().selectionChanged()
+                }
+                break
+            }
+        }
+        
+        // On gesture end, notify delegate
+        if gesture.state == .ended || gesture.state == .cancelled {
+            delegate?.didSelectStampScale(selectedStampScale)
+        }
     }
     
     @objc private func handleMarkerWidthPan(_ gesture: UIPanGestureRecognizer) {
