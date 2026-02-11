@@ -36,6 +36,9 @@ final class CasePhoto {
     // 1ページ表示フラグ（PDFで1枚1ページで表示）
     var isFullPage: Bool = false
     
+    // PDF/プレビュー出力対象フラグ（案件詳細の左上トグルで制御）
+    var isIncludedInPDF: Bool = true
+    
     // スタンプ集計表示の有効/無効（写真詳細 + PDFで共通利用）
     var isStampSummaryEnabled: Bool = false
     

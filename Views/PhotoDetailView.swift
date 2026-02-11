@@ -130,6 +130,34 @@ struct PhotoDetailView: View {
                         .tint(.white)
                 }
                 
+                VStack {
+                    HStack {
+                        Button(action: {
+                            togglePDFInclusion()
+                        }) {
+                            Circle()
+                                .fill(currentPhoto.isIncludedInPDF ? accentGreen : Color(.systemGray3))
+                                .overlay(
+                                    Circle().stroke(Color.white.opacity(0.9), lineWidth: 1)
+                                )
+                                .overlay {
+                                    if currentPhoto.isIncludedInPDF, let exportIndex = pdfExportIndex {
+                                        Text("\(exportIndex)")
+                                            .font(.system(size: 17, weight: .bold))
+                                            .foregroundColor(.white)
+                                    }
+                                }
+                                .frame(width: 36, height: 36)
+                        }
+                        .padding(.leading, 12)
+                        .padding(.top, 12)
+                        
+                        Spacer()
+                    }
+                    
+                    Spacer()
+                }
+                
                 // ナビゲーションボタン
                 HStack {
                     if hasPrevious {
@@ -194,6 +222,19 @@ struct PhotoDetailView: View {
                     currentPhoto.parentCase?.touch()
                     try? modelContext.save()
                 }
+            
+            // 1ページ表示トグル
+            HStack {
+                Image(systemName: currentPhoto.isIncludedInPDF ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(currentPhoto.isIncludedInPDF ? accentGreen : .secondary)
+                Text("PDF/プレビューに含める")
+                    .font(.subheadline)
+                Spacer()
+                Toggle("", isOn: pdfInclusionBinding)
+                    .labelsHidden()
+                    .tint(accentGreen)
+            }
+            .padding(.top, 4)
             
             // 1ページ表示トグル
             HStack {
@@ -289,6 +330,25 @@ struct PhotoDetailView: View {
     
     private var noteLineCount: Int {
         currentPhoto.note.components(separatedBy: "\n").count
+    }
+    
+    private var pdfExportIndex: Int? {
+        guard let parent = currentPhoto.parentCase else { return currentPhoto.isIncludedInPDF ? 1 : nil }
+        let includedPhotos = parent.sortedPhotos.filter { $0.isIncludedInPDF }
+        guard let index = includedPhotos.firstIndex(of: currentPhoto) else { return nil }
+        return index + 1
+    }
+    
+    private var pdfInclusionBinding: Binding<Bool> {
+        Binding(
+            get: { currentPhoto.isIncludedInPDF },
+            set: { newValue in
+                guard currentPhoto.isIncludedInPDF != newValue else { return }
+                currentPhoto.isIncludedInPDF = newValue
+                currentPhoto.parentCase?.touch()
+                try? modelContext.save()
+            }
+        )
     }
 
     private var stampSummaryEnabledBinding: Binding<Bool> {
@@ -490,6 +550,12 @@ struct PhotoDetailView: View {
             )
             displayImage = image
         }
+    }
+    
+    private func togglePDFInclusion() {
+        currentPhoto.isIncludedInPDF.toggle()
+        currentPhoto.parentCase?.touch()
+        try? modelContext.save()
     }
     
     // 仕様: 90度右回転、非同期処理

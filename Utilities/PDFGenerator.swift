@@ -24,7 +24,7 @@ class PDFGenerator {
     
     func generatePDF(for caseItem: Case) async -> Data? {
         let title = caseItem.title
-        let photos = caseItem.sortedPhotos
+        let photos = caseItem.sortedPhotos.filter { $0.isIncludedInPDF }
         let showCoverPage = caseItem.showCoverPage
         
         // 写真データを準備（isFullPage/スタンプ集計情報も含む）
@@ -142,9 +142,7 @@ class PDFGenerator {
             drawPhotoPage(
                 title: title,
                 photos: photoDataForPage,
-                startNumber: startNumber + 1,
-                pageNumber: pageIndex + 1,
-                totalPages: totalPages
+                startNumber: startNumber + 1
             )
         }
     }
@@ -509,7 +507,6 @@ class PDFGenerator {
         
         let title = caseItem.title
         let overallNote = caseItem.overallNote
-        let photoCount = caseItem.sortedPhotos.count
         
         // ヘッダーバー（シンプルなライン）
         context.saveGState()
@@ -526,18 +523,7 @@ class PDFGenerator {
         let titleY: CGFloat = 80
         (title as NSString).draw(in: CGRect(x: margin, y: titleY, width: pageWidth - margin*2, height: 80), withAttributes: mainTitleAttr)
         
-        // 情報エリア（写真枚数のみ）
-        let infoY: CGFloat = titleY + 60
-        let infoFont = UIFont.systemFont(ofSize: 12)
-        
-        let infoText = "写真: \(photoCount)枚"
-        let infoAttr: [NSAttributedString.Key: Any] = [
-            .font: infoFont,
-            .foregroundColor: textLight
-        ]
-        (infoText as NSString).draw(at: CGPoint(x: margin, y: infoY), withAttributes: infoAttr)
-        
-        var currentY = infoY + 30
+        var currentY = titleY + 90
         let bottomMargin: CGFloat = 80
         
         // 詳細情報の構築（ラベル:値 の形式で配列に保存）
@@ -689,9 +675,7 @@ class PDFGenerator {
     private func drawPhotoPage(
         title: String,
         photos: [(fileName: String, note: String, drawing: Data?, textOverlay: UIImage?)],
-        startNumber: Int,
-        pageNumber: Int,
-        totalPages: Int
+        startNumber: Int
     ) {
         UIGraphicsBeginPDFPage()
         
@@ -704,14 +688,6 @@ class PDFGenerator {
             .foregroundColor: textLight
         ]
         (title as NSString).draw(at: CGPoint(x: margin, y: headerY), withAttributes: headerAttr)
-        
-        let pageStr = "\(pageNumber) / \(totalPages)"
-        let pageAttr: [NSAttributedString.Key: Any] = [
-            .font: UIFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular),
-            .foregroundColor: textLight
-        ]
-        let pageSize = pageStr.size(withAttributes: pageAttr)
-        (pageStr as NSString).draw(at: CGPoint(x: pageWidth - margin - pageSize.width, y: headerY), withAttributes: pageAttr)
         
         // グリッド計算 (2x2)
         let gridSpacing: CGFloat = 15

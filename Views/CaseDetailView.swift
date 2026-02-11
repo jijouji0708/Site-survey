@@ -66,6 +66,20 @@ struct CaseDetailView: View {
     private let accentGreen = Color(red: 0.2, green: 0.78, blue: 0.35)
     private let maxPhotos = 50
     
+    private var hasIncludedPDFPhotos: Bool {
+        caseItem.sortedPhotos.contains { $0.isIncludedInPDF }
+    }
+    
+    private func exportNumberMap(for photos: [CasePhoto]) -> [UUID: Int] {
+        var map: [UUID: Int] = [:]
+        var number = 1
+        for photo in photos where photo.isIncludedInPDF {
+            map[photo.id] = number
+            number += 1
+        }
+        return map
+    }
+    
     // 仕様: LazyVGrid、adaptive(minimum: 100, maximum: 140)、spacing: 10
     private let columns = [
         GridItem(.adaptive(minimum: 85), spacing: 10)
@@ -122,7 +136,7 @@ struct CaseDetailView: View {
                                 .foregroundColor(accentGreen)
                         }
                     }
-                    .disabled(isGeneratingPDF || caseItem.photos.isEmpty)
+                    .disabled(isGeneratingPDF || !hasIncludedPDFPhotos)
                     
                     // Share Button
                     Button(action: { generatePDF(forPreview: false) }) {
@@ -133,7 +147,7 @@ struct CaseDetailView: View {
                                 .foregroundColor(accentGreen)
                         }
                     }
-                    .disabled(isGeneratingPDF || caseItem.photos.isEmpty)
+                    .disabled(isGeneratingPDF || !hasIncludedPDFPhotos)
                 }
             }
             
@@ -359,9 +373,71 @@ struct CaseDetailView: View {
     // MARK: - 写真追加セクション
     // 仕様: PhotosPicker「追加」+ カメラ「撮影」+ スキャン「スキャン」、systemGray5背景
     
+    private struct PhotoActionLabelMetrics {
+        let iconSize: CGFloat
+        let textSize: CGFloat
+        let itemSpacing: CGFloat
+        let horizontalPadding: CGFloat
+        let rowHeight: CGFloat
+    }
+    
+    private func photoActionLabelMetrics(buttonWidth: CGFloat) -> PhotoActionLabelMetrics {
+        if buttonWidth < 70 {
+            return PhotoActionLabelMetrics(
+                iconSize: 10.5,
+                textSize: 10,
+                itemSpacing: 2,
+                horizontalPadding: 2,
+                rowHeight: 40
+            )
+        } else if buttonWidth < 82 {
+            return PhotoActionLabelMetrics(
+                iconSize: 11,
+                textSize: 10.5,
+                itemSpacing: 3,
+                horizontalPadding: 3,
+                rowHeight: 42
+            )
+        } else {
+            return PhotoActionLabelMetrics(
+                iconSize: 12,
+                textSize: 11,
+                itemSpacing: 4,
+                horizontalPadding: 4,
+                rowHeight: 44
+            )
+        }
+    }
+    
+    private func photoActionLabel(
+        title: String,
+        systemImage: String,
+        isAtLimit: Bool,
+        metrics: PhotoActionLabelMetrics
+    ) -> some View {
+        HStack(spacing: metrics.itemSpacing) {
+            Image(systemName: systemImage)
+                .font(.system(size: metrics.iconSize, weight: .semibold))
+                .frame(width: metrics.iconSize + 2)
+            
+            Text(title)
+                .font(.system(size: metrics.textSize, weight: .bold, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .allowsTightening(true)
+        }
+        .frame(maxWidth: .infinity, minHeight: metrics.rowHeight)
+        .padding(.horizontal, metrics.horizontalPadding)
+        .background(isAtLimit ? Color(.systemGray4) : Color(.systemGray5))
+        .cornerRadius(8)
+    }
+    
     private var photoAddSection: some View {
         let isAtLimit = caseItem.photos.count >= maxPhotos
         let remainingSlots = maxPhotos - caseItem.photos.count
+        let hasCamera = UIImagePickerController.isSourceTypeAvailable(.camera)
+        let hasScanner = VNDocumentCameraViewController.isSupported
+        let buttonCount = 2 + (hasCamera ? 1 : 0) + (hasScanner ? 1 : 0)
         
         return VStack(spacing: 8) {
             // 上限到達時のメッセージ
@@ -376,62 +452,73 @@ struct CaseDetailView: View {
                 .padding(.vertical, 8)
             }
             
-            HStack(spacing: 12) {
-                PhotosPicker(
-                    selection: $selectedPhotoItems,
-                    maxSelectionCount: max(0, remainingSlots),
-                    matching: .images
-                ) {
-                    Label("追加", systemImage: "photo.on.rectangle")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(isAtLimit ? Color(.systemGray4) : Color(.systemGray5))
-                        .cornerRadius(8)
-                }
-                .disabled(isAtLimit)
+            GeometryReader { proxy in
+                let compact = proxy.size.width < 360
+                let spacing: CGFloat = compact ? 8 : 12
+                let buttonWidth = (proxy.size.width - spacing * CGFloat(max(0, buttonCount - 1))) / CGFloat(max(1, buttonCount))
+                let metrics = photoActionLabelMetrics(buttonWidth: buttonWidth)
                 
-                // 仕様: カメラ使用前に isSourceTypeAvailable(.camera) で確認
-                if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                    Button(action: {
-                        showCamera = true
-                    }) {
-                        Label("撮影", systemImage: "camera")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(isAtLimit ? Color(.systemGray4) : Color(.systemGray5))
-                            .cornerRadius(8)
+                HStack(spacing: spacing) {
+                    PhotosPicker(
+                        selection: $selectedPhotoItems,
+                        maxSelectionCount: max(0, remainingSlots),
+                        matching: .images
+                    ) {
+                        photoActionLabel(
+                            title: "追加",
+                            systemImage: "photo.on.rectangle",
+                            isAtLimit: isAtLimit,
+                            metrics: metrics
+                        )
                     }
                     .disabled(isAtLimit)
-                }
-                
-                // スキャン機能 (VisionKitが利用可能な場合)
-                if VNDocumentCameraViewController.isSupported {
-                    Button(action: {
-                        showScanner = true
-                    }) {
-                        Label("スキャン", systemImage: "doc.text.viewfinder")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(isAtLimit ? Color(.systemGray4) : Color(.systemGray5))
-                            .cornerRadius(8)
+                    
+                    // 仕様: カメラ使用前に isSourceTypeAvailable(.camera) で確認
+                    if hasCamera {
+                        Button(action: {
+                            showCamera = true
+                        }) {
+                            photoActionLabel(
+                                title: "撮影",
+                                systemImage: "camera",
+                                isAtLimit: isAtLimit,
+                                metrics: metrics
+                            )
+                        }
+                        .disabled(isAtLimit)
                     }
-                    .disabled(isAtLimit)
+                    
+                    // スキャン機能 (VisionKitが利用可能な場合)
+                    if hasScanner {
+                        Button(action: {
+                            showScanner = true
+                        }) {
+                            photoActionLabel(
+                                title: "スキャン",
+                                systemImage: "viewfinder",
+                                isAtLimit: isAtLimit,
+                                metrics: metrics
+                            )
+                        }
+                        .disabled(isAtLimit)
+                    }
+                    
+                    // PDF取込（写真として取り込み）
+                    Button(action: {
+                        showPDFImportPicker = true
+                    }) {
+                        photoActionLabel(
+                            title: "PDF",
+                            systemImage: "doc.fill",
+                            isAtLimit: isAtLimit,
+                            metrics: metrics
+                        )
+                    }
+                    .disabled(isAtLimit || isImportingPDF)
                 }
-                
-                // PDF取込（写真として取り込み）
-                Button(action: {
-                    showPDFImportPicker = true
-                }) {
-                    Label("PDF", systemImage: "doc.fill")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(isAtLimit ? Color(.systemGray4) : Color(.systemGray5))
-                        .cornerRadius(8)
-                }
-                .disabled(isAtLimit || isImportingPDF)
+                .foregroundColor(isAtLimit ? .gray : accentGreen)
             }
-            .foregroundColor(isAtLimit ? .gray : accentGreen)
-            .font(.caption.bold())
+            .frame(height: 44)
             
             // インポート中表示
             if isImportingPDF {
@@ -462,6 +549,8 @@ struct CaseDetailView: View {
     // グリッド表示
     private var gridPhotoView: some View {
         let screenWidth = UIScreen.main.bounds.width
+        let sortedPhotos = caseItem.sortedPhotos
+        let exportNumbers = exportNumberMap(for: sortedPhotos)
         // パディング(16*2)を考慮した有効幅
         let availableWidth = screenWidth - 32
         // セル間のスペース
@@ -475,11 +564,16 @@ struct CaseDetailView: View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: spacing), count: columnsCount)
         
         return LazyVGrid(columns: columns, spacing: 10) {
-            ForEach(caseItem.sortedPhotos) { photo in
+            ForEach(sortedPhotos) { photo in
                 ZStack {
                     PhotoThumbView(
                         photo: photo,
-                        index: (caseItem.sortedPhotos.firstIndex(of: photo) ?? 0) + 1,
+                        exportNumber: exportNumbers[photo.id],
+                        isIncludedInPDF: photo.isIncludedInPDF,
+                        onTogglePDFInclusion: {
+                            photo.isIncludedInPDF.toggle()
+                            caseItem.touch()
+                        },
                         isReordering: false,
                         updateTrigger: thumbUpdateTrigger,
                         onDuplicate: { duplicatePhoto(photo) },
@@ -562,15 +656,21 @@ struct CaseDetailView: View {
         let screenWidth = UIScreen.main.bounds.width
         let thumbnailSize: CGFloat = max(80, min(120, screenWidth * 0.25)) // 画面幅の25%、80-120の範囲
         let sortedPhotos = caseItem.sortedPhotos
+        let exportNumbers = exportNumberMap(for: sortedPhotos)
         
         return LazyVStack(spacing: 12) {
-            ForEach(Array(sortedPhotos.enumerated()), id: \.element.id) { index, photo in
+            ForEach(sortedPhotos) { photo in
                 HStack(alignment: .top, spacing: 12) {
                     // 写真サムネイル（PhotoThumbViewを使用、動的サイズ）
                     ZStack {
                         PhotoThumbView(
                             photo: photo,
-                            index: index + 1,
+                            exportNumber: exportNumbers[photo.id],
+                            isIncludedInPDF: photo.isIncludedInPDF,
+                            onTogglePDFInclusion: {
+                                photo.isIncludedInPDF.toggle()
+                                caseItem.touch()
+                            },
                             isReordering: false,
                             updateTrigger: thumbUpdateTrigger,
                             onDuplicate: { duplicatePhoto(photo) },
@@ -1170,7 +1270,9 @@ struct PhotoDropDelegate: DropDelegate {
 
 struct PhotoThumbView: View {
     let photo: CasePhoto
-    let index: Int
+    let exportNumber: Int?
+    let isIncludedInPDF: Bool
+    let onTogglePDFInclusion: () -> Void
     let isReordering: Bool
     let updateTrigger: UUID
     let onDuplicate: () -> Void
@@ -1185,84 +1287,100 @@ struct PhotoThumbView: View {
             let size = min(geometry.size.width, geometry.size.height)
             // ボタン3つが確実に収まるよう調整: 3*buttonSize + 2*spacing + 2*padding < size
             let buttonSize: CGFloat = min(28, max(18, size * 0.18))
-            let badgeSize: CGFloat = max(16, size * 0.18)
-            let padding: CGFloat = max(3, size * 0.04)
+            let selectorSize: CGFloat = min(34, max(24, size * 0.24))
+            let padding: CGFloat = max(1.5, size * 0.02)
             
-            NavigationLink(destination: PhotoDetailView(photo: photo)) {
-                ZStack(alignment: .topLeading) {
-                    // 背景（白）
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.white)
-                        .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
-                    
-                    // サムネイル画像（全体表示）
-                    if let image = thumbImage {
-                        Image(uiImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .padding(padding * 1.5)
-                    } else {
-                        ProgressView()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                    
-                    // 番号バッジ（緑円形）
+            ZStack(alignment: .topLeading) {
+                NavigationLink(destination: PhotoDetailView(photo: photo)) {
                     ZStack {
-                        Circle()
-                            .fill(accentGreen)
-                            .frame(width: badgeSize, height: badgeSize)
+                        // 背景（白）
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.white)
+                            .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
                         
-                        Text("\(index)")
-                            .font(.system(size: badgeSize * 0.55, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-                    .padding(padding)
-                    
-                    // 操作ボタン（写真内に収まるよう調整）
-                    VStack {
-                        Spacer()
-                        HStack(spacing: padding) {
-                            // マークアップボタン（オレンジ）
-                            NavigationLink(destination: MarkupLoaderView(photo: photo)) {
-                                Image(systemName: "pencil.tip.crop.circle")
-                                    .font(.system(size: buttonSize * 0.5))
-                                    .foregroundColor(.white)
-                                    .frame(width: buttonSize, height: buttonSize)
-                                    .background(Color.orange)
-                                    .clipShape(Circle())
-                            }
-                            
+                        // サムネイル画像（全体表示）
+                        if let image = thumbImage {
+                            Image(uiImage: image)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .padding(padding * 1.5)
+                        } else {
+                            ProgressView()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                        
+                        // 操作ボタン（写真内に収まるよう調整）
+                        VStack {
                             Spacer()
-                            
-                            // 複製ボタン（緑）
-                            Button(action: onDuplicate) {
-                                Image(systemName: "doc.on.doc")
-                                    .font(.system(size: buttonSize * 0.5))
-                                    .foregroundColor(.white)
-                                    .frame(width: buttonSize, height: buttonSize)
-                                    .background(accentGreen)
-                                    .clipShape(Circle())
+                            HStack(spacing: padding) {
+                                // マークアップボタン（オレンジ）
+                                NavigationLink(destination: MarkupLoaderView(photo: photo)) {
+                                    Image(systemName: "pencil.tip.crop.circle")
+                                        .font(.system(size: buttonSize * 0.5))
+                                        .foregroundColor(.white)
+                                        .frame(width: buttonSize, height: buttonSize)
+                                        .background(Color.orange)
+                                        .clipShape(Circle())
+                                }
+                                
+                                Spacer()
+                                
+                                // 複製ボタン（緑）
+                                Button(action: onDuplicate) {
+                                    Image(systemName: "doc.on.doc")
+                                        .font(.system(size: buttonSize * 0.5))
+                                        .foregroundColor(.white)
+                                        .frame(width: buttonSize, height: buttonSize)
+                                        .background(accentGreen)
+                                        .clipShape(Circle())
+                                }
+                                
+                                // 削除ボタン（赤）
+                                Button(action: onDelete) {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: buttonSize * 0.5))
+                                        .foregroundColor(.white)
+                                        .frame(width: buttonSize, height: buttonSize)
+                                        .background(Color.red)
+                                        .clipShape(Circle())
+                                }
                             }
-                            
-                            // 削除ボタン（赤）
-                            Button(action: onDelete) {
-                                Image(systemName: "trash")
-                                    .font(.system(size: buttonSize * 0.5))
+                            .padding(.horizontal, padding)
+                            .padding(.bottom, padding)
+                        }
+                        
+                        if !isIncludedInPDF {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.black.opacity(0.22))
+                        }
+                    }
+                    .frame(width: size, height: size)
+                    .clipped() // はみ出し防止
+                }
+                .buttonStyle(.plain)
+                .frame(width: geometry.size.width, height: geometry.size.height)
+                
+                // PDF/プレビュー出力対象トグル（左上・グレー）
+                Button(action: onTogglePDFInclusion) {
+                    Circle()
+                        .fill(isIncludedInPDF ? accentGreen : Color(.systemGray3))
+                        .overlay(
+                            Circle().stroke(Color.white.opacity(0.9), lineWidth: 1)
+                        )
+                        .overlay {
+                            if isIncludedInPDF, let exportNumber {
+                                Text("\(exportNumber)")
+                                    .font(.system(size: selectorSize * 0.54, weight: .bold))
                                     .foregroundColor(.white)
-                                    .frame(width: buttonSize, height: buttonSize)
-                                    .background(Color.red)
-                                    .clipShape(Circle())
+                                    .minimumScaleFactor(0.7)
                             }
                         }
-                        .padding(.horizontal, padding)
-                        .padding(.bottom, padding)
-                    }
+                        .frame(width: selectorSize, height: selectorSize)
                 }
-                .frame(width: size, height: size)
-                .clipped() // はみ出し防止
+                .frame(width: selectorSize + 10, height: selectorSize + 10)
+                .buttonStyle(.plain)
+                .padding(padding)
             }
-            .buttonStyle(.plain)
-            .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .aspectRatio(1.0, contentMode: .fit) // 正方形を維持
         .onAppear {

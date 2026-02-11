@@ -22,6 +22,12 @@ struct CaseListView: View {
     @State private var caseToDelete: Case?
     @State private var showDeleteAlert = false
     @State private var showBulkDeleteAlert = false
+    @State private var caseToRename: Case?
+    @State private var renameTitle: String = ""
+    @State private var showRenameAlert = false
+    @State private var showPDFPreview = false
+    @State private var pdfPreviewURL: URL?
+    @State private var previewGeneratingCaseID: UUID?
     
     // 仕様: アクセントカラー（緑）Color(red: 0.2, green: 0.78, blue: 0.35)
     private let accentGreen = Color(red: 0.2, green: 0.78, blue: 0.35)
@@ -98,6 +104,18 @@ struct CaseListView: View {
             } message: {
                 Text("選択した\(selection.count)件の案件を削除してもよろしいですか？\n含まれる写真もすべて削除されます。")
             }
+            .alert("案件名を変更", isPresented: $showRenameAlert) {
+                TextField("案件名", text: $renameTitle)
+                Button("キャンセル", role: .cancel) {}
+                Button("保存") {
+                    renameCase()
+                }
+            }
+            .sheet(isPresented: $showPDFPreview) {
+                if let url = pdfPreviewURL {
+                    PDFPreviewView(url: url)
+                }
+            }
             .navigationDestination(for: Case.self) { caseItem in
                  CaseDetailView(caseItem: caseItem)
             }
@@ -141,14 +159,47 @@ struct CaseListView: View {
                     }
                     
                     CaseRowView(caseItem: caseItem)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            if !isSelectionMode {
+                                path.append(caseItem)
+                            }
+                        }
+                    
+                    if !isSelectionMode {
+                        HStack(spacing: 10) {
+                            Button(action: {
+                                generatePDFPreview(for: caseItem)
+                            }) {
+                                Group {
+                                    if previewGeneratingCaseID == caseItem.id {
+                                        ProgressView()
+                                            .scaleEffect(0.75)
+                                    } else {
+                                        Image(systemName: "eye")
+                                    }
+                                }
+                                .frame(width: 24, height: 24)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundColor(accentGreen)
+                            .disabled(previewGeneratingCaseID != nil || !hasIncludedPDFPhotos(caseItem))
+                            
+                            Button(action: {
+                                startRename(caseItem)
+                            }) {
+                                Image(systemName: "pencil")
+                                    .frame(width: 24, height: 24)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundColor(accentGreen)
+                        }
+                    }
                 }
                 .contentShape(Rectangle()) // タップ領域を広げる
                 .onTapGesture {
                     if isSelectionMode {
                         toggleSelection(for: caseItem)
-                    } else {
-                        // 選択モードでない場合は詳細へ遷移（プログラム制御）
-                        path.append(caseItem)
                     }
                 }
                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -160,6 +211,13 @@ struct CaseListView: View {
                             Label("削除", systemImage: "trash")
                         }
                         .tint(.red)
+                        
+                        Button {
+                            startRename(caseItem)
+                        } label: {
+                            Label("名称変更", systemImage: "pencil")
+                        }
+                        .tint(accentGreen)
                     }
                 }
             }
@@ -181,6 +239,50 @@ struct CaseListView: View {
         let newCase = Case()
         modelContext.insert(newCase)
         try? modelContext.save()
+    }
+    
+    private func hasIncludedPDFPhotos(_ caseItem: Case) -> Bool {
+        caseItem.sortedPhotos.contains { $0.isIncludedInPDF }
+    }
+    
+    private func startRename(_ caseItem: Case) {
+        caseToRename = caseItem
+        renameTitle = caseItem.title
+        showRenameAlert = true
+    }
+    
+    private func renameCase() {
+        guard let caseItem = caseToRename else { return }
+        let trimmed = renameTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        caseItem.title = trimmed
+        caseItem.touch()
+        try? modelContext.save()
+    }
+    
+    private func generatePDFPreview(for caseItem: Case) {
+        previewGeneratingCaseID = caseItem.id
+        Task {
+            let generator = PDFGenerator()
+            if let data = await generator.generatePDF(for: caseItem) {
+                let fileName = caseItem.title.isEmpty ? "SiteSurvey.pdf" : "\(caseItem.title).pdf"
+                let safeFileName = fileName.replacingOccurrences(of: "/", with: "-")
+                let uniqueDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                try? FileManager.default.createDirectory(at: uniqueDir, withIntermediateDirectories: true)
+                let tempURL = uniqueDir.appendingPathComponent(safeFileName)
+                try? data.write(to: tempURL)
+                
+                await MainActor.run {
+                    pdfPreviewURL = tempURL
+                    showPDFPreview = true
+                    previewGeneratingCaseID = nil
+                }
+            } else {
+                await MainActor.run {
+                    previewGeneratingCaseID = nil
+                }
+            }
+        }
     }
     
     private func deleteCase(_ caseItem: Case) {
