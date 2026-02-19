@@ -275,6 +275,8 @@ nonisolated struct ShapeAnnotationModel: Codable, Identifiable {
     
     var colorHex: String
     var lineWidth: CGFloat
+    var isFilled: Bool? = nil
+    var fillOpacity: CGFloat? = nil
     
     var uicolor: UIColor {
         return UIColor(hex: colorHex) ?? .red
@@ -295,7 +297,9 @@ nonisolated struct ShapeAnnotationModel: Codable, Identifiable {
             width: height,
             height: width,
             colorHex: colorHex,
-            lineWidth: lineWidth
+            lineWidth: lineWidth,
+            isFilled: isFilled,
+            fillOpacity: fillOpacity
         )
     }
 }

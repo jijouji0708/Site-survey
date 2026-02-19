@@ -187,7 +187,7 @@ struct CaseDetailView: View {
         .sheet(isPresented: $showScanner) {
             DocumentScanner { images in
                 for image in images {
-                    addPhoto(image)
+                    addScannedPhoto(image)
                 }
             }
         }
@@ -279,13 +279,6 @@ struct CaseDetailView: View {
                 
                 Spacer()
                 
-                // 表紙非表示時のラベル
-                if !caseItem.showCoverPage {
-                    Text("PDFは写真のみ")
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                }
-                
                 Toggle("", isOn: $caseItem.showCoverPage)
                     .labelsHidden()
                     .tint(accentGreen)
@@ -343,6 +336,13 @@ struct CaseDetailView: View {
                     .font(.headline)
                 
                 Spacer()
+
+                // 白紙A4追加ボタン（結合ボタンの左）
+                Button(action: addBlankA4Photo) {
+                    Image(systemName: "doc.badge.plus")
+                        .foregroundColor(caseItem.photos.count >= maxPhotos ? .gray : accentGreen)
+                }
+                .disabled(caseItem.photos.count >= maxPhotos)
                 
                 // 結合ボタン（2枚以上あれば表示）
                 if caseItem.photos.count >= 2 {
@@ -654,7 +654,10 @@ struct CaseDetailView: View {
     private var listPhotoView: some View {
         // 画面幅に応じてサムネイルサイズを動的に計算
         let screenWidth = UIScreen.main.bounds.width
-        let thumbnailSize: CGFloat = max(80, min(120, screenWidth * 0.25)) // 画面幅の25%、80-120の範囲
+        let isCompactWidth = screenWidth <= 375
+        let thumbnailSize: CGFloat = isCompactWidth
+            ? max(96, min(112, screenWidth * 0.28))
+            : max(100, min(132, screenWidth * 0.25))
         let sortedPhotos = caseItem.sortedPhotos
         let exportNumbers = exportNumberMap(for: sortedPhotos)
         
@@ -1023,6 +1026,35 @@ struct CaseDetailView: View {
         
         try? modelContext.save()
     }
+
+    private func addScannedPhoto(_ image: UIImage) {
+        guard let fileName = ImageStorage.shared.saveScannedImage(image) else { return }
+
+        let photo = CasePhoto(imageFileName: fileName, orderIndex: caseItem.photos.count)
+        photo.parentCase = caseItem
+        caseItem.photos.append(photo)
+        caseItem.touch()
+
+        try? modelContext.save()
+    }
+
+    private func addBlankA4Photo() {
+        guard caseItem.photos.count < maxPhotos else { return }
+        let image = createBlankA4Image()
+        addPhoto(image)
+    }
+
+    private func createBlankA4Image() -> UIImage {
+        // A4縦比率（約1:1.414）。容量を抑えつつ十分な解像度で生成。
+        let size = CGSize(width: 1240, height: 1754)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: size, format: format).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+        }
+    }
     
     /// カメラ撮影後の処理: iOS標準写真アプリに保存し、マークアップ画面へ遷移
     private func addPhotoFromCamera(_ image: UIImage) {
@@ -1065,6 +1097,14 @@ struct CaseDetailView: View {
         let newPhoto = CasePhoto(imageFileName: newFileName, orderIndex: originalIndex + 1)
         newPhoto.note = photo.note
         newPhoto.markupData = photo.markupData
+        newPhoto.annotationData = photo.annotationData
+        newPhoto.textOverlayData = photo.textOverlayData
+        newPhoto.isComposite = photo.isComposite
+        newPhoto.sourceImageFileNames = photo.sourceImageFileNames
+        newPhoto.isFullPage = photo.isFullPage
+        newPhoto.isIncludedInPDF = photo.isIncludedInPDF
+        newPhoto.isStampSummaryEnabled = photo.isStampSummaryEnabled
+        newPhoto.stampLegendMeaningsData = photo.stampLegendMeaningsData
         newPhoto.parentCase = caseItem
         
         // 元の写真より後ろにある全ての写真のorderIndexを+1
@@ -1078,10 +1118,11 @@ struct CaseDetailView: View {
         caseItem.touch()
         
         // サムネイル更新
-        if photo.markupData != nil {
+        if photo.markupData != nil || photo.textOverlayData != nil {
             ImageStorage.shared.updateThumbSync(
                 newFileName,
-                drawing: photo.drawing
+                drawing: photo.drawing,
+                textOverlay: photo.textOverlay
             )
         }
         
@@ -1285,10 +1326,11 @@ struct PhotoThumbView: View {
     var body: some View {
         GeometryReader { geometry in
             let size = min(geometry.size.width, geometry.size.height)
-            // ボタン3つが確実に収まるよう調整: 3*buttonSize + 2*spacing + 2*padding < size
-            let buttonSize: CGFloat = min(28, max(18, size * 0.18))
-            let selectorSize: CGFloat = min(34, max(24, size * 0.24))
-            let padding: CGFloat = max(1.5, size * 0.02)
+            let isCompact = size < 100
+            let buttonSize: CGFloat = isCompact ? 18 : 20
+            let selectorSize: CGFloat = isCompact ? 26 : 30
+            let imagePadding: CGFloat = isCompact ? 4 : 6
+            let controlPadding: CGFloat = isCompact ? 3 : 4
             
             ZStack(alignment: .topLeading) {
                 NavigationLink(destination: PhotoDetailView(photo: photo)) {
@@ -1303,16 +1345,19 @@ struct PhotoThumbView: View {
                             Image(uiImage: image)
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
-                                .padding(padding * 1.5)
+                                .padding(.horizontal, imagePadding)
+                                .padding(.top, imagePadding)
+                                .padding(.bottom, buttonSize + controlPadding * 4)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         } else {
                             ProgressView()
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
                         
-                        // 操作ボタン（写真内に収まるよう調整）
+                        // 操作ボタン（常にサムネイル内に収まる小型バー）
                         VStack {
                             Spacer()
-                            HStack(spacing: padding) {
+                            HStack(spacing: controlPadding * 2) {
                                 // マークアップボタン（オレンジ）
                                 NavigationLink(destination: MarkupLoaderView(photo: photo)) {
                                     Image(systemName: "pencil.tip.crop.circle")
@@ -1322,10 +1367,7 @@ struct PhotoThumbView: View {
                                         .background(Color.orange)
                                         .clipShape(Circle())
                                 }
-                                
-                                Spacer()
-                                
-                                // 複製ボタン（緑）
+
                                 Button(action: onDuplicate) {
                                     Image(systemName: "doc.on.doc")
                                         .font(.system(size: buttonSize * 0.5))
@@ -1334,8 +1376,7 @@ struct PhotoThumbView: View {
                                         .background(accentGreen)
                                         .clipShape(Circle())
                                 }
-                                
-                                // 削除ボタン（赤）
+
                                 Button(action: onDelete) {
                                     Image(systemName: "trash")
                                         .font(.system(size: buttonSize * 0.5))
@@ -1345,8 +1386,11 @@ struct PhotoThumbView: View {
                                         .clipShape(Circle())
                                 }
                             }
-                            .padding(.horizontal, padding)
-                            .padding(.bottom, padding)
+                            .padding(.horizontal, controlPadding * 2)
+                            .padding(.vertical, controlPadding)
+                            .background(Color.black.opacity(0.36))
+                            .clipShape(Capsule())
+                            .padding(.bottom, controlPadding)
                         }
                         
                         if !isIncludedInPDF {
@@ -1379,7 +1423,7 @@ struct PhotoThumbView: View {
                 }
                 .frame(width: selectorSize + 10, height: selectorSize + 10)
                 .buttonStyle(.plain)
-                .padding(padding)
+                .padding(controlPadding + 1)
             }
         }
         .aspectRatio(1.0, contentMode: .fit) // 正方形を維持

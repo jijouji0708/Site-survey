@@ -22,6 +22,7 @@ class ImageStorage {
     // 設定値
     private let maxImageSize: CGFloat = 1200
     private let imageCompressionQuality: CGFloat = 0.7
+    private let maxScannedImageSize: CGFloat = 3600
     private let thumbMaxSize: CGFloat = 150
     private let thumbCompressionQuality: CGFloat = 0.6
     
@@ -78,6 +79,65 @@ class ImageStorage {
         
         return fileName
     }
+
+    func saveScannedImage(_ image: UIImage) -> String? {
+        // スキャンはメモアプリ相当に近づけるため高解像度を保持
+        let fileName = UUID().uuidString + ".png"
+        let resized = resizeImage(image, maxSize: maxScannedImageSize)
+
+        guard let data = resized.pngData() else { return nil }
+
+        let imageURL = imagesDirectory.appendingPathComponent(fileName)
+        do {
+            try data.write(to: imageURL, options: .atomic)
+        } catch {
+            print("スキャン画像保存エラー: \(error)")
+            return nil
+        }
+
+        let thumb = resizeImage(resized, maxSize: thumbMaxSize)
+        if let thumbData = thumb.jpegData(compressionQuality: thumbCompressionQuality) {
+            let thumbURL = thumbsDirectory.appendingPathComponent(fileName)
+            try? thumbData.write(to: thumbURL, options: .atomic)
+        }
+
+        return fileName
+    }
+
+    @discardableResult
+    func replaceImage(_ fileName: String, with image: UIImage) -> Bool {
+        // 保存時と同じ条件で正規化
+        let resized = resizeImage(image, maxSize: maxImageSize)
+        let isPNG = fileName.lowercased().hasSuffix(".png")
+        let data: Data?
+        if isPNG {
+            data = resized.pngData()
+        } else {
+            data = resized.jpegData(compressionQuality: imageCompressionQuality)
+        }
+        guard let data else { return false }
+
+        let imageURL = imagesDirectory.appendingPathComponent(fileName)
+        do {
+            try data.write(to: imageURL, options: .atomic)
+        } catch {
+            print("画像上書きエラー: \(error)")
+            return false
+        }
+
+        let thumb = resizeImage(resized, maxSize: thumbMaxSize)
+        if let thumbData = thumb.jpegData(compressionQuality: thumbCompressionQuality) {
+            let thumbURL = thumbsDirectory.appendingPathComponent(fileName)
+            try? thumbData.write(to: thumbURL, options: .atomic)
+            thumbCache.setObject(thumb, forKey: fileName as NSString)
+        } else {
+            thumbCache.removeObject(forKey: fileName as NSString)
+        }
+
+        compositeCache.removeObject(forKey: fileName as NSString)
+        NotificationCenter.default.post(name: Self.thumbUpdatedNotification, object: fileName)
+        return true
+    }
     
     // MARK: - 読み込み
     
@@ -123,6 +183,7 @@ class ImageStorage {
         let compressionQuality = imageCompressionQuality
         let thumbMaxSz = thumbMaxSize
         let thumbCompression = thumbCompressionQuality
+        let isPNG = fileName.lowercased().hasSuffix(".png")
         
         guard let image = loadImage(fileName) else { return false }
         
@@ -130,7 +191,13 @@ class ImageStorage {
             let rotated = Self.rotate90Degrees(image)
             
             // 元画像を上書き保存
-            guard let data = rotated.jpegData(compressionQuality: compressionQuality) else { return false }
+            let data: Data?
+            if isPNG {
+                data = rotated.pngData()
+            } else {
+                data = rotated.jpegData(compressionQuality: compressionQuality)
+            }
+            guard let data else { return false }
             let imageURL = imagesDir.appendingPathComponent(fileName)
             do {
                 try data.write(to: imageURL)
@@ -268,7 +335,7 @@ class ImageStorage {
         guard let composite = getCompositeImage(fileName, drawing: drawing, textOverlay: textOverlay) else {
             return nil
         }
-        return resizeImage(composite, maxSize: 800)
+        return resizeImage(composite, maxSize: 2400)
     }
     
     // MARK: - 画像結合（複数写真を1枚に）

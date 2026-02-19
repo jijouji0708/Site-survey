@@ -15,7 +15,11 @@ final class Case {
     var overallNote: String = ""
     var address: String = ""
     var area: String = "" // エリア（自由入力）
+    var folderName: String = ""
     var showCoverPage: Bool = true // 表紙（メモ・詳細）を表示するかどうか
+    var listOrder: Double = Date().timeIntervalSince1970
+    var isArchived: Bool = false
+    var archivedAt: Date?
     
     // 詳細情報
     // 曜日: 1=Sun, ..., 7=Sat (Calendar.current.component(.weekday, ...)準拠)
@@ -60,6 +64,18 @@ final class Case {
             p.orderIndex = i
         }
         invalidateSortCache()
+    }
+
+    func archive() {
+        isArchived = true
+        archivedAt = Date()
+        touch()
+    }
+
+    func restoreFromArchive() {
+        isArchived = false
+        archivedAt = nil
+        touch()
     }
     
     init() {

@@ -5,6 +5,7 @@ struct PhotoMarkupView: View {
     private let saveNotification = Notification.Name("PerformMarkupSave")
     private let undoNotification = Notification.Name("PerformMarkupUndo")
     private let redoNotification = Notification.Name("PerformMarkupRedo")
+    private let toggleImageAdjustNotification = Notification.Name("ToggleMarkupImageAdjustPanel")
     
     @Environment(\.dismiss) var dismiss
     var image: UIImage
@@ -12,6 +13,7 @@ struct PhotoMarkupView: View {
     var annotations: MarkupData?
     
     var onSave: ((PKDrawing, MarkupData, UIImage) -> Void)?
+    var onSaveEditedImage: ((UIImage?) -> Void)? = nil
     
     @State private var isDirty = false
     @State private var showDiscardAlert = false
@@ -22,7 +24,7 @@ struct PhotoMarkupView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
-                backButton
+                leadingToolbarItems
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 trailingToolbarItems
@@ -37,6 +39,7 @@ struct PhotoMarkupView: View {
             existingDrawing: drawing,
             initialData: annotations,
             isDirty: $isDirty,
+            onSaveEditedImage: onSaveEditedImage,
             onSave: { d, a, i in
                 onSave?(d, a, i)
                 dismiss()
@@ -64,6 +67,21 @@ struct PhotoMarkupView: View {
                 Image(systemName: "chevron.left")
                 Text("戻る")
             }
+        }
+    }
+
+    private var imageAdjustButton: some View {
+        Button(action: {
+            NotificationCenter.default.post(name: toggleImageAdjustNotification, object: nil)
+        }) {
+            Image(systemName: "slider.horizontal.3")
+        }
+    }
+
+    private var leadingToolbarItems: some View {
+        HStack(spacing: 10) {
+            backButton
+            imageAdjustButton
         }
     }
     

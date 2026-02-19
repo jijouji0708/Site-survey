@@ -14,6 +14,7 @@ protocol MarkupToolbarDelegate: AnyObject {
     func didSelectNumberVisibility(_ isVisible: Bool)
     func didSelectNumberFillOpacity(_ opacity: CGFloat)
     func didSelectNumberRotation(_ rotation: CGFloat)
+    func didSelectShapeFillOpacity(_ opacity: CGFloat)
 }
 
 class MarkupToolbar: UIView {
@@ -45,7 +46,7 @@ class MarkupToolbar: UIView {
     private var markerWidthButtons: [UIButton] = []
     
     // Pen Width
-    private var selectedPenWidth: CGFloat = 1 // Default: Medium (current)
+    private var selectedPenWidth: CGFloat = 0.5 // Default: Smallest
     private var orderedPenWidths: [CGFloat] = [0.5, 1, 2] // Thin, Medium, Thick
     private var penWidthButtons: [UIButton] = []
     
@@ -68,6 +69,13 @@ class MarkupToolbar: UIView {
     
     private let penWidthSelectionIndicator = UIView()
     private weak var penWidthStackRef: UIStackView?
+
+    // Shape Fill Options（丸/四角）
+    private var selectedShapeFillOpacity: CGFloat = 0.0
+    private weak var shapeContainerRef: UIView?
+    private weak var shapeOpacityStackRef: UIStackView?
+    private weak var shapeOpacitySliderRef: UISlider?
+    private weak var shapeOpacityLabelRef: UILabel?
     
     // Stamp Selection
     private var selectedStamp: StampType = .check
@@ -97,7 +105,7 @@ class MarkupToolbar: UIView {
     private weak var numberExpandedContentRef: UIStackView?
     private weak var numberToggleButtonRef: UIButton?
     private weak var numberShapeStackRef: UIStackView?
-    private var selectedNumberScale: CGFloat = 0.5
+    private var selectedNumberScale: CGFloat = 0.25
     private var orderedNumberScales: [CGFloat] = [0.25, 0.5] // S, L（Lは旧S）
     private var selectedNumberVisibility: Bool = true
     private var selectedNumberFillOpacity: CGFloat = 1.0
@@ -256,6 +264,66 @@ class MarkupToolbar: UIView {
             penWidthStack.addArrangedSubview(btn)
             penWidthButtons.append(btn)
         }
+
+        // Shape Fill Container（丸/四角専用）
+        let shapeContainer = UIView()
+        shapeContainer.isHidden = true
+        shapeContainer.alpha = 0
+        mainStack.addArrangedSubview(shapeContainer)
+        self.shapeContainerRef = shapeContainer
+
+        let shapeOuterStack = UIStackView()
+        shapeOuterStack.axis = .vertical
+        shapeOuterStack.spacing = 8
+        shapeOuterStack.distribution = .fill
+        shapeOuterStack.translatesAutoresizingMaskIntoConstraints = false
+        shapeContainer.addSubview(shapeOuterStack)
+        NSLayoutConstraint.activate([
+            shapeOuterStack.leadingAnchor.constraint(equalTo: shapeContainer.leadingAnchor),
+            shapeOuterStack.trailingAnchor.constraint(equalTo: shapeContainer.trailingAnchor),
+            shapeOuterStack.topAnchor.constraint(equalTo: shapeContainer.topAnchor),
+            shapeOuterStack.bottomAnchor.constraint(equalTo: shapeContainer.bottomAnchor)
+        ])
+
+        let shapeOpacityStack = UIStackView()
+        shapeOpacityStack.axis = .horizontal
+        shapeOpacityStack.spacing = 8
+        shapeOpacityStack.alignment = .center
+        shapeOpacityStack.distribution = .fill
+        shapeOpacityStack.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        shapeOuterStack.addArrangedSubview(shapeOpacityStack)
+        self.shapeOpacityStackRef = shapeOpacityStack
+
+        let shapeOpacityIcon = UIImageView(image: UIImage(systemName: "drop.fill"))
+        shapeOpacityIcon.tintColor = UIColor.white.withAlphaComponent(0.9)
+        shapeOpacityIcon.contentMode = .scaleAspectFit
+        shapeOpacityIcon.setContentHuggingPriority(.required, for: .horizontal)
+        shapeOpacityIcon.translatesAutoresizingMaskIntoConstraints = false
+        shapeOpacityStack.addArrangedSubview(shapeOpacityIcon)
+        NSLayoutConstraint.activate([
+            shapeOpacityIcon.widthAnchor.constraint(equalToConstant: 14),
+            shapeOpacityIcon.heightAnchor.constraint(equalToConstant: 14)
+        ])
+
+        let shapeOpacitySlider = UISlider()
+        shapeOpacitySlider.minimumValue = 0
+        shapeOpacitySlider.maximumValue = 1
+        shapeOpacitySlider.value = Float(selectedShapeFillOpacity)
+        shapeOpacitySlider.minimumTrackTintColor = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0)
+        shapeOpacitySlider.maximumTrackTintColor = UIColor.white.withAlphaComponent(0.25)
+        shapeOpacitySlider.addTarget(self, action: #selector(handleShapeOpacitySliderChanged(_:)), for: .valueChanged)
+        shapeOpacityStack.addArrangedSubview(shapeOpacitySlider)
+        self.shapeOpacitySliderRef = shapeOpacitySlider
+
+        let shapeOpacityLabel = UILabel()
+        shapeOpacityLabel.textColor = .white
+        shapeOpacityLabel.font = .systemFont(ofSize: 12, weight: .bold)
+        shapeOpacityLabel.textAlignment = .right
+        shapeOpacityLabel.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        shapeOpacityStack.addArrangedSubview(shapeOpacityLabel)
+        self.shapeOpacityLabelRef = shapeOpacityLabel
+
+        updateShapeFillOpacityUI()
         
         // Number Stamp Container（折りたたみ対応）
         let numberContainer = UIView()
@@ -343,30 +411,60 @@ class MarkupToolbar: UIView {
         }
         updateNumberShapeUI()
 
+        // Compact row 1: Number visibility + Number size
+        let numberCompactTopRow = UIStackView()
+        numberCompactTopRow.axis = .horizontal
+        numberCompactTopRow.spacing = 12
+        numberCompactTopRow.distribution = .fill
+        numberExpandedContent.addArrangedSubview(numberCompactTopRow)
+        numberCompactTopRow.heightAnchor.constraint(equalToConstant: 32).isActive = true
+
+        let numberVisibilityContainer = UIView()
+        numberVisibilityContainer.backgroundColor = UIColor.white.withAlphaComponent(0.06)
+        numberVisibilityContainer.layer.cornerRadius = 10
+        numberCompactTopRow.addArrangedSubview(numberVisibilityContainer)
+
+        let numberScaleContainer = UIView()
+        numberScaleContainer.backgroundColor = UIColor.white.withAlphaComponent(0.06)
+        numberScaleContainer.layer.cornerRadius = 10
+        numberCompactTopRow.addArrangedSubview(numberScaleContainer)
+        numberVisibilityContainer.widthAnchor.constraint(equalTo: numberScaleContainer.widthAnchor).isActive = true
+
         // Number visibility (ON/OFF)
         let numberVisibilityStack = UIStackView()
         numberVisibilityStack.axis = .horizontal
-        numberVisibilityStack.spacing = 8
+        numberVisibilityStack.spacing = 6
         numberVisibilityStack.alignment = .center
         numberVisibilityStack.distribution = .fill
-        numberExpandedContent.addArrangedSubview(numberVisibilityStack)
-        numberVisibilityStack.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        numberVisibilityStack.translatesAutoresizingMaskIntoConstraints = false
+        numberVisibilityContainer.addSubview(numberVisibilityStack)
+        NSLayoutConstraint.activate([
+            numberVisibilityStack.leadingAnchor.constraint(equalTo: numberVisibilityContainer.leadingAnchor, constant: 8),
+            numberVisibilityStack.trailingAnchor.constraint(equalTo: numberVisibilityContainer.trailingAnchor, constant: -8),
+            numberVisibilityStack.topAnchor.constraint(equalTo: numberVisibilityContainer.topAnchor),
+            numberVisibilityStack.bottomAnchor.constraint(equalTo: numberVisibilityContainer.bottomAnchor)
+        ])
         self.numberVisibilityStackRef = numberVisibilityStack
 
-        let numberVisibilityTitle = UILabel()
-        numberVisibilityTitle.text = "数字表示"
-        numberVisibilityTitle.textColor = .white
-        numberVisibilityTitle.font = .systemFont(ofSize: 13, weight: .medium)
-        numberVisibilityStack.addArrangedSubview(numberVisibilityTitle)
+        let numberVisibilityIcon = UIImageView(image: UIImage(systemName: "textformat.123"))
+        numberVisibilityIcon.tintColor = UIColor.white.withAlphaComponent(0.9)
+        numberVisibilityIcon.contentMode = .scaleAspectFit
+        numberVisibilityIcon.translatesAutoresizingMaskIntoConstraints = false
+        numberVisibilityIcon.setContentHuggingPriority(.required, for: .horizontal)
+        numberVisibilityStack.addArrangedSubview(numberVisibilityIcon)
+        NSLayoutConstraint.activate([
+            numberVisibilityIcon.widthAnchor.constraint(equalToConstant: 14),
+            numberVisibilityIcon.heightAnchor.constraint(equalToConstant: 14)
+        ])
 
         let numberVisibilitySpacer = UIView()
         numberVisibilityStack.addArrangedSubview(numberVisibilitySpacer)
 
         let numberVisibilityButton = UIButton(type: .system)
         numberVisibilityButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .bold)
-        numberVisibilityButton.layer.cornerRadius = 12
+        numberVisibilityButton.layer.cornerRadius = 10
         numberVisibilityButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
-        numberVisibilityButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 64).isActive = true
+        numberVisibilityButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 54).isActive = true
         numberVisibilityButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.selectNumberVisibility(!self.selectedNumberVisibility)
@@ -374,64 +472,36 @@ class MarkupToolbar: UIView {
         numberVisibilityStack.addArrangedSubview(numberVisibilityButton)
         self.numberVisibilityButtonRef = numberVisibilityButton
 
-        // Number fill opacity slider (10% step)
-        let numberOpacityStack = UIStackView()
-        numberOpacityStack.axis = .horizontal
-        numberOpacityStack.spacing = 8
-        numberOpacityStack.alignment = .center
-        numberOpacityStack.distribution = .fill
-        numberExpandedContent.addArrangedSubview(numberOpacityStack)
-        numberOpacityStack.heightAnchor.constraint(equalToConstant: 32).isActive = true
-        self.numberOpacityStackRef = numberOpacityStack
-
-        let numberOpacityTitle = UILabel()
-        numberOpacityTitle.text = "塗り"
-        numberOpacityTitle.textColor = .white
-        numberOpacityTitle.font = .systemFont(ofSize: 13, weight: .medium)
-        numberOpacityTitle.setContentHuggingPriority(.required, for: .horizontal)
-        numberOpacityStack.addArrangedSubview(numberOpacityTitle)
-
-        let numberOpacitySlider = UISlider()
-        numberOpacitySlider.minimumValue = 0.0
-        numberOpacitySlider.maximumValue = 1.0
-        numberOpacitySlider.value = Float(selectedNumberFillOpacity)
-        numberOpacitySlider.minimumTrackTintColor = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0)
-        numberOpacitySlider.maximumTrackTintColor = UIColor.white.withAlphaComponent(0.25)
-        numberOpacitySlider.addTarget(self, action: #selector(handleNumberOpacitySliderChanged(_:)), for: .valueChanged)
-        numberOpacityStack.addArrangedSubview(numberOpacitySlider)
-        self.numberOpacitySliderRef = numberOpacitySlider
-
-        let numberOpacityLabel = UILabel()
-        numberOpacityLabel.textColor = .white
-        numberOpacityLabel.font = .systemFont(ofSize: 12, weight: .bold)
-        numberOpacityLabel.textAlignment = .right
-        numberOpacityLabel.widthAnchor.constraint(equalToConstant: 44).isActive = true
-        numberOpacityStack.addArrangedSubview(numberOpacityLabel)
-        self.numberOpacityLabelRef = numberOpacityLabel
-
-        updateNumberVisibilityUI()
-        updateNumberFillOpacityUI()
-
         // Number size selection (S/L)
         let numberScaleStack = UIStackView()
         numberScaleStack.axis = .horizontal
-        numberScaleStack.spacing = 8
+        numberScaleStack.spacing = 6
         numberScaleStack.alignment = .center
         numberScaleStack.distribution = .fill
-        numberExpandedContent.addArrangedSubview(numberScaleStack)
-        numberScaleStack.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        numberScaleStack.translatesAutoresizingMaskIntoConstraints = false
+        numberScaleContainer.addSubview(numberScaleStack)
+        NSLayoutConstraint.activate([
+            numberScaleStack.leadingAnchor.constraint(equalTo: numberScaleContainer.leadingAnchor, constant: 8),
+            numberScaleStack.trailingAnchor.constraint(equalTo: numberScaleContainer.trailingAnchor, constant: -8),
+            numberScaleStack.topAnchor.constraint(equalTo: numberScaleContainer.topAnchor),
+            numberScaleStack.bottomAnchor.constraint(equalTo: numberScaleContainer.bottomAnchor)
+        ])
         self.numberScaleStackRef = numberScaleStack
 
-        let numberScaleTitle = UILabel()
-        numberScaleTitle.text = "サイズ"
-        numberScaleTitle.textColor = .white
-        numberScaleTitle.font = .systemFont(ofSize: 13, weight: .medium)
-        numberScaleTitle.setContentHuggingPriority(.required, for: .horizontal)
-        numberScaleStack.addArrangedSubview(numberScaleTitle)
+        let numberScaleIcon = UIImageView(image: UIImage(systemName: "textformat.size"))
+        numberScaleIcon.tintColor = UIColor.white.withAlphaComponent(0.9)
+        numberScaleIcon.contentMode = .scaleAspectFit
+        numberScaleIcon.translatesAutoresizingMaskIntoConstraints = false
+        numberScaleIcon.setContentHuggingPriority(.required, for: .horizontal)
+        numberScaleStack.addArrangedSubview(numberScaleIcon)
+        NSLayoutConstraint.activate([
+            numberScaleIcon.widthAnchor.constraint(equalToConstant: 14),
+            numberScaleIcon.heightAnchor.constraint(equalToConstant: 14)
+        ])
 
         let numberScaleButtonRow = UIStackView()
         numberScaleButtonRow.axis = .horizontal
-        numberScaleButtonRow.spacing = 8
+        numberScaleButtonRow.spacing = 6
         numberScaleButtonRow.distribution = .fillEqually
         numberScaleStack.addArrangedSubview(numberScaleButtonRow)
 
@@ -452,23 +522,73 @@ class MarkupToolbar: UIView {
             numberScaleButtons.append(btn)
         }
         updateNumberStampScaleUI()
+        updateNumberVisibilityUI()
+
+        // Compact row 2: Number fill opacity + Number rotation
+        let numberCompactSliderRow = UIStackView()
+        numberCompactSliderRow.axis = .horizontal
+        numberCompactSliderRow.spacing = 8
+        numberCompactSliderRow.distribution = .fillEqually
+        numberExpandedContent.addArrangedSubview(numberCompactSliderRow)
+        numberCompactSliderRow.heightAnchor.constraint(equalToConstant: 32).isActive = true
+
+        // Number fill opacity slider (10% step)
+        let numberOpacityStack = UIStackView()
+        numberOpacityStack.axis = .horizontal
+        numberOpacityStack.spacing = 6
+        numberOpacityStack.alignment = .center
+        numberOpacityStack.distribution = .fill
+        numberCompactSliderRow.addArrangedSubview(numberOpacityStack)
+        self.numberOpacityStackRef = numberOpacityStack
+
+        let numberOpacityIcon = UIImageView(image: UIImage(systemName: "drop.fill"))
+        numberOpacityIcon.tintColor = UIColor.white.withAlphaComponent(0.9)
+        numberOpacityIcon.contentMode = .scaleAspectFit
+        numberOpacityIcon.translatesAutoresizingMaskIntoConstraints = false
+        numberOpacityIcon.setContentHuggingPriority(.required, for: .horizontal)
+        numberOpacityStack.addArrangedSubview(numberOpacityIcon)
+        NSLayoutConstraint.activate([
+            numberOpacityIcon.widthAnchor.constraint(equalToConstant: 14),
+            numberOpacityIcon.heightAnchor.constraint(equalToConstant: 14)
+        ])
+
+        let numberOpacitySlider = UISlider()
+        numberOpacitySlider.minimumValue = 0.0
+        numberOpacitySlider.maximumValue = 1.0
+        numberOpacitySlider.value = Float(selectedNumberFillOpacity)
+        numberOpacitySlider.minimumTrackTintColor = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0)
+        numberOpacitySlider.maximumTrackTintColor = UIColor.white.withAlphaComponent(0.25)
+        numberOpacitySlider.addTarget(self, action: #selector(handleNumberOpacitySliderChanged(_:)), for: .valueChanged)
+        numberOpacityStack.addArrangedSubview(numberOpacitySlider)
+        self.numberOpacitySliderRef = numberOpacitySlider
+
+        let numberOpacityLabel = UILabel()
+        numberOpacityLabel.textColor = .white
+        numberOpacityLabel.font = .systemFont(ofSize: 11, weight: .bold)
+        numberOpacityLabel.textAlignment = .right
+        numberOpacityLabel.widthAnchor.constraint(equalToConstant: 38).isActive = true
+        numberOpacityStack.addArrangedSubview(numberOpacityLabel)
+        self.numberOpacityLabelRef = numberOpacityLabel
 
         // Number rotation controls (0...90, 15-step slider)
         let numberRotationStack = UIStackView()
         numberRotationStack.axis = .horizontal
-        numberRotationStack.spacing = 8
+        numberRotationStack.spacing = 6
         numberRotationStack.alignment = .center
         numberRotationStack.distribution = .fill
-        numberExpandedContent.addArrangedSubview(numberRotationStack)
-        numberRotationStack.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        numberCompactSliderRow.addArrangedSubview(numberRotationStack)
         self.numberRotationStackRef = numberRotationStack
 
-        let numberRotationTitle = UILabel()
-        numberRotationTitle.text = "回転"
-        numberRotationTitle.textColor = .white
-        numberRotationTitle.font = .systemFont(ofSize: 13, weight: .medium)
-        numberRotationTitle.setContentHuggingPriority(.required, for: .horizontal)
-        numberRotationStack.addArrangedSubview(numberRotationTitle)
+        let numberRotationIcon = UIImageView(image: UIImage(systemName: "rotate.right.fill"))
+        numberRotationIcon.tintColor = UIColor.white.withAlphaComponent(0.9)
+        numberRotationIcon.contentMode = .scaleAspectFit
+        numberRotationIcon.translatesAutoresizingMaskIntoConstraints = false
+        numberRotationIcon.setContentHuggingPriority(.required, for: .horizontal)
+        numberRotationStack.addArrangedSubview(numberRotationIcon)
+        NSLayoutConstraint.activate([
+            numberRotationIcon.widthAnchor.constraint(equalToConstant: 14),
+            numberRotationIcon.heightAnchor.constraint(equalToConstant: 14)
+        ])
 
         let numberRotationSlider = UISlider()
         numberRotationSlider.minimumValue = 0
@@ -482,11 +602,13 @@ class MarkupToolbar: UIView {
 
         let numberRotationLabel = UILabel()
         numberRotationLabel.textColor = .white
-        numberRotationLabel.font = .systemFont(ofSize: 12, weight: .bold)
+        numberRotationLabel.font = .systemFont(ofSize: 11, weight: .bold)
         numberRotationLabel.textAlignment = .right
-        numberRotationLabel.widthAnchor.constraint(equalToConstant: 52).isActive = true
+        numberRotationLabel.widthAnchor.constraint(equalToConstant: 38).isActive = true
         numberRotationStack.addArrangedSubview(numberRotationLabel)
         self.numberRotationLabelRef = numberRotationLabel
+
+        updateNumberFillOpacityUI()
         updateNumberRotationUI()
         
         let stampContainer = UIView()
@@ -915,6 +1037,7 @@ class MarkupToolbar: UIView {
         let isArrow = (tool == .arrow)
         let isMarker = (tool == .marker)
         let isPen = (tool == .pen)
+        let isShape = (tool == .rect || tool == .circle)
         let isStamp = (tool == .stamp)
         let isNumberStamp = (tool == .numberStamp)
         
@@ -923,6 +1046,7 @@ class MarkupToolbar: UIView {
         arrowStyleStackRef?.isHidden = !isArrow
         markerWidthStackRef?.isHidden = !isMarker
         penWidthStackRef?.isHidden = !isPen
+        shapeContainerRef?.isHidden = !isShape
         stampContainerRef?.isHidden = !isStamp
         numberContainerRef?.isHidden = !isNumberStamp
         numberExpandedContentRef?.isHidden = !isNumberStamp || !isNumberPanelExpanded
@@ -940,6 +1064,7 @@ class MarkupToolbar: UIView {
             self.arrowStyleStackRef?.alpha = isArrow ? 1.0 : 0.0
             self.markerWidthStackRef?.alpha = isMarker ? 1.0 : 0.0
             self.penWidthStackRef?.alpha = isPen ? 1.0 : 0.0
+            self.shapeContainerRef?.alpha = isShape ? 1.0 : 0.0
             self.stampContainerRef?.alpha = isStamp ? 1.0 : 0.0
             self.numberContainerRef?.alpha = isNumberStamp ? 1.0 : 0.0
             self.numberExpandedContentRef?.alpha = (isNumberStamp && self.isNumberPanelExpanded) ? 1.0 : 0.0
@@ -976,6 +1101,16 @@ class MarkupToolbar: UIView {
             delegate?.didSelectPenWidth(width)
         }
         updateUI(animated: true)
+    }
+
+    func selectShapeFillOpacity(_ opacity: CGFloat, notifyDelegate: Bool = true) {
+        let clamped = max(0.0, min(1.0, opacity))
+        let stepped = round(clamped * 10) / 10
+        selectedShapeFillOpacity = stepped
+        if notifyDelegate {
+            delegate?.didSelectShapeFillOpacity(stepped)
+        }
+        updateShapeFillOpacityUI()
     }
     
     func selectNumberShape(_ shape: NumberShape, notifyDelegate: Bool = true) {
@@ -1030,6 +1165,12 @@ class MarkupToolbar: UIView {
             btn.transform = isSelected ? CGAffineTransform(scaleX: 1.1, y: 1.1) : .identity
         }
     }
+
+    private func updateShapeFillOpacityUI() {
+        shapeOpacitySliderRef?.setValue(Float(selectedShapeFillOpacity), animated: false)
+        let percent = Int((selectedShapeFillOpacity * 100).rounded())
+        shapeOpacityLabelRef?.text = "\(percent)%"
+    }
     
     private func updateNumberVisibilityUI() {
         guard let button = numberVisibilityButtonRef else { return }
@@ -1062,6 +1203,11 @@ class MarkupToolbar: UIView {
     @objc private func handleNumberOpacitySliderChanged(_ sender: UISlider) {
         let stepped = CGFloat(round(sender.value * 10) / 10)
         selectNumberFillOpacity(stepped)
+    }
+
+    @objc private func handleShapeOpacitySliderChanged(_ sender: UISlider) {
+        let stepped = CGFloat(round(sender.value * 10) / 10)
+        selectShapeFillOpacity(stepped)
     }
 
     @objc private func handleNumberRotationSliderChanged(_ sender: UISlider) {
@@ -1327,6 +1473,7 @@ class MarkupToolbar: UIView {
         updateArrowStyleIndicatorPosition(animated: animated)
         updateMarkerWidthIndicatorPosition(animated: animated)
         updatePenWidthIndicatorPosition(animated: animated)
+        updateShapeFillOpacityUI()
         updateNumberVisibilityUI()
         updateNumberFillOpacityUI()
         updateNumberStampScaleUI()

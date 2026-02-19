@@ -415,15 +415,25 @@ struct PhotoDetailView: View {
         VStack(spacing: 12) {
             // 結合写真の場合は解除ボタンを表示
             if currentPhoto.isComposite {
-                Button(action: {
-                    showDecomposeAlert = true
-                }) {
-                    Label("結合解除", systemImage: "rectangle.2.swap")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Color.purple)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
+                HStack {
+                    Spacer()
+                    Button(action: {
+                        showDecomposeAlert = true
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "rectangle.2.swap")
+                            Text("解除")
+                        }
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.purple.opacity(0.18))
+                        .foregroundColor(.purple)
+                        .overlay(
+                            Capsule().stroke(Color.purple.opacity(0.5), lineWidth: 1)
+                        )
+                        .clipShape(Capsule())
+                    }
                 }
                 .padding(.horizontal)
             }
@@ -589,6 +599,20 @@ struct PhotoDetailView: View {
     }
     
     private func deletePhoto() {
+        let fallbackPhotoAfterDeletion: CasePhoto? = {
+            guard let caseItem = currentPhoto.parentCase,
+                  let currentIndex = caseItem.sortedPhotos.firstIndex(of: currentPhoto) else { return nil }
+
+            let photos = caseItem.sortedPhotos
+            guard photos.count > 1 else { return nil }
+
+            // 原則は「次の写真」、末尾削除時のみ前の写真へ
+            if currentIndex < photos.count - 1 {
+                return photos[currentIndex + 1]
+            }
+            return photos[currentIndex - 1]
+        }()
+
         ImageStorage.shared.deleteImage(currentPhoto.imageFileName)
         
         if let caseItem = currentPhoto.parentCase {
@@ -601,8 +625,15 @@ struct PhotoDetailView: View {
         
         modelContext.delete(currentPhoto)
         try? modelContext.save()
-        
-        dismiss()
+
+        if let nextPhoto = fallbackPhotoAfterDeletion {
+            currentPhoto = nextPhoto
+            isStampSummaryExpanded = false
+            slideOffset = 0
+            loadImage()
+        } else {
+            dismiss()
+        }
     }
     
     private func decomposePhoto() {
@@ -645,15 +676,24 @@ struct MarkupLoaderView: View {
         Group {
             if let image = originalImage {
 
-                PhotoMarkupView(image: image, drawing: photo.drawing, annotations: photo.annotations) { newDrawing, newAnnotations, overlayImage in
-                    photo.setDrawing(newDrawing)
-                    photo.annotations = newAnnotations
-                    photo.setTextOverlay(overlayImage) // サムネイル/後方互換用
-                    photo.parentCase?.touch()
-                    // サムネイル更新
-                    ImageStorage.shared.updateThumbSync(photo.imageFileName, drawing: newDrawing, textOverlay: overlayImage)
-                    NotificationCenter.default.post(name: ImageStorage.thumbUpdatedNotification, object: photo.imageFileName)
-                }
+                PhotoMarkupView(
+                    image: image,
+                    drawing: photo.drawing,
+                    annotations: photo.annotations,
+                    onSave: { newDrawing, newAnnotations, overlayImage in
+                        photo.setDrawing(newDrawing)
+                        photo.annotations = newAnnotations
+                        photo.setTextOverlay(overlayImage) // サムネイル/後方互換用
+                        photo.parentCase?.touch()
+                        // サムネイル更新
+                        ImageStorage.shared.updateThumbSync(photo.imageFileName, drawing: newDrawing, textOverlay: overlayImage)
+                        NotificationCenter.default.post(name: ImageStorage.thumbUpdatedNotification, object: photo.imageFileName)
+                    },
+                    onSaveEditedImage: { editedBaseImage in
+                        guard let editedBaseImage else { return }
+                        _ = ImageStorage.shared.replaceImage(photo.imageFileName, with: editedBaseImage)
+                    }
+                )
             } else {
                 ProgressView()
                 .onAppear {

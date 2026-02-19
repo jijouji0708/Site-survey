@@ -1,6 +1,7 @@
 import UIKit
 import PencilKit
 import AVFoundation
+import CoreImage
 
 // MARK: - Enums & Protocols
 
@@ -30,6 +31,10 @@ enum NumberShape: String, Codable, CaseIterable {
 // MARK: - Views (Internal)
 
 class BaseAnnotationView: UIView {
+    static let selectionIndicatorAlpha: CGFloat = 0.5
+    static var selectionBorderColor: UIColor { UIColor.green.withAlphaComponent(selectionIndicatorAlpha) }
+    static var selectionHandleFillColor: UIColor { UIColor.white.withAlphaComponent(selectionIndicatorAlpha) }
+
     var id: UUID
     var isSelected: Bool = false { didSet { updateSelectionState() } }
     var onDelete: (() -> Void)?
@@ -60,7 +65,7 @@ class BaseAnnotationView: UIView {
     }
     
     func updateSelectionState() {
-        layer.borderColor = isSelected ? UIColor.green.cgColor : UIColor.clear.cgColor
+        layer.borderColor = isSelected ? Self.selectionBorderColor.cgColor : UIColor.clear.cgColor
         layer.borderWidth = isSelected ? 2 : 0
         deleteButton.isHidden = !isSelected
         
@@ -136,7 +141,7 @@ class TextAnnotationView: BaseAnnotationView {
     override func updateSelectionState() {
         super.updateSelectionState() // Trigger Base delete button logic
         bgView.isHidden = !isSelected
-        bgView.layer.borderColor = isSelected ? UIColor.green.cgColor : UIColor.clear.cgColor
+        bgView.layer.borderColor = isSelected ? BaseAnnotationView.selectionBorderColor.cgColor : UIColor.clear.cgColor
         bgView.layer.borderWidth = isSelected ? 2 : 0
     }
 }
@@ -218,7 +223,7 @@ class StampAnnotationView: BaseAnnotationView {
     override func updateSelectionState() {
         super.updateSelectionState()
         bgView.isHidden = !isSelected
-        bgView.layer.borderColor = isSelected ? UIColor.green.cgColor : UIColor.clear.cgColor
+        bgView.layer.borderColor = isSelected ? BaseAnnotationView.selectionBorderColor.cgColor : UIColor.clear.cgColor
         bgView.layer.borderWidth = isSelected ? 2 : 0
     }
 }
@@ -394,7 +399,7 @@ class NumberStampAnnotationView: BaseAnnotationView {
     override func updateSelectionState() {
         super.updateSelectionState()
         bgView.isHidden = !isSelected
-        bgView.layer.borderColor = isSelected ? UIColor.green.cgColor : UIColor.clear.cgColor
+        bgView.layer.borderColor = isSelected ? BaseAnnotationView.selectionBorderColor.cgColor : UIColor.clear.cgColor
         bgView.layer.borderWidth = isSelected ? 2 : 0
         bgView.layer.cornerRadius = numberShape == .circle ? bounds.width / 2 : 0
     }
@@ -409,6 +414,9 @@ class NumberStampAnnotationView: BaseAnnotationView {
 }
 
 class ArrowAnnotationView: BaseAnnotationView {
+    static let headLength: CGFloat = 10
+    static let headAngle: CGFloat = .pi / 6
+
     var startPoint: CGPoint { didSet { setNeedsLayout() } }
     var endPoint: CGPoint { didSet { setNeedsLayout() } }
     var color: UIColor { didSet { shapeLayer.strokeColor = color.cgColor } }
@@ -455,10 +463,10 @@ class ArrowAnnotationView: BaseAnnotationView {
     
     private func setupHandle(_ v: UIView) {
         v.frame = CGRect(x: 0, y: 0, width: 24, height: 24)
-        v.backgroundColor = .white
+        v.backgroundColor = BaseAnnotationView.selectionHandleFillColor
         v.layer.cornerRadius = 12
         v.layer.borderWidth = 3
-        v.layer.borderColor = UIColor.green.cgColor
+        v.layer.borderColor = BaseAnnotationView.selectionBorderColor.cgColor
         v.isHidden = true
     }
     
@@ -466,7 +474,7 @@ class ArrowAnnotationView: BaseAnnotationView {
         super.updateSelectionState()
         startHandle.isHidden = !isSelected
         endHandle.isHidden = !isSelected
-        shapeLayer.shadowColor = isSelected ? UIColor.green.cgColor : UIColor.black.cgColor
+        shapeLayer.shadowColor = isSelected ? BaseAnnotationView.selectionBorderColor.cgColor : UIColor.black.cgColor
     }
     
     override func layoutSubviews() {
@@ -481,8 +489,8 @@ class ArrowAnnotationView: BaseAnnotationView {
         path.addLine(to: localEnd)
         
         // Arrow Head
-        let arrowLen: CGFloat = 20
-        let arrowAngle: CGFloat = .pi / 6
+        let arrowLen = Self.headLength
+        let arrowAngle = Self.headAngle
         
         // End Arrow (for .oneWay and .twoWay)
         if style == .oneWay || style == .twoWay {
@@ -570,8 +578,19 @@ class ArrowAnnotationView: BaseAnnotationView {
 
 class ShapeAnnotationView: BaseAnnotationView {
     var shapeType: MarkupTool // .rect or .circle
-    var color: UIColor { didSet { shapeLayer.strokeColor = color.cgColor } }
+    var color: UIColor {
+        didSet {
+            shapeLayer.strokeColor = color.cgColor
+            updateFillColor()
+        }
+    }
     var lineWidth: CGFloat { didSet { shapeLayer.lineWidth = lineWidth } }
+    var isFilled: Bool {
+        didSet { updateFillColor() }
+    }
+    var fillOpacity: CGFloat {
+        didSet { updateFillColor() }
+    }
     
     private let shapeLayer = CAShapeLayer()
     
@@ -581,10 +600,20 @@ class ShapeAnnotationView: BaseAnnotationView {
     private let bl = UIView() // Bottom Left
     private let br = UIView() // Bottom Right
     
-    init(id: UUID = UUID(), frame: CGRect, shapeType: MarkupTool, color: UIColor, lineWidth: CGFloat) {
+    init(
+        id: UUID = UUID(),
+        frame: CGRect,
+        shapeType: MarkupTool,
+        color: UIColor,
+        lineWidth: CGFloat,
+        isFilled: Bool = false,
+        fillOpacity: CGFloat = 1.0
+    ) {
         self.shapeType = shapeType
         self.color = color
         self.lineWidth = lineWidth
+        self.isFilled = isFilled
+        self.fillOpacity = max(0.0, min(1.0, fillOpacity))
         super.init(id: id, frame: frame)
     }
     
@@ -604,8 +633,8 @@ class ShapeAnnotationView: BaseAnnotationView {
         addSubview(br)
         
         shapeLayer.lineWidth = lineWidth
-        shapeLayer.fillColor = UIColor.clear.cgColor
         shapeLayer.strokeColor = color.cgColor
+        updateFillColor()
         shapeLayer.shadowColor = UIColor.black.cgColor
         shapeLayer.shadowOpacity = 0.3
         shapeLayer.shadowOffset = CGSize(width: 0, height: 2)
@@ -614,10 +643,10 @@ class ShapeAnnotationView: BaseAnnotationView {
     
     private func setupHandle(_ v: UIView) {
         v.frame = CGRect(x: 0, y: 0, width: 20, height: 20)
-        v.backgroundColor = .white
+        v.backgroundColor = BaseAnnotationView.selectionHandleFillColor
         v.layer.cornerRadius = 10
         v.layer.borderWidth = 2
-        v.layer.borderColor = UIColor.green.cgColor
+        v.layer.borderColor = BaseAnnotationView.selectionBorderColor.cgColor
         v.isHidden = true
     }
     
@@ -627,7 +656,7 @@ class ShapeAnnotationView: BaseAnnotationView {
         tr.isHidden = !isSelected
         bl.isHidden = !isSelected
         br.isHidden = !isSelected
-        shapeLayer.shadowColor = isSelected ? UIColor.green.cgColor : UIColor.black.cgColor
+        shapeLayer.shadowColor = isSelected ? BaseAnnotationView.selectionBorderColor.cgColor : UIColor.black.cgColor
     }
     
     override func layoutSubviews() {
@@ -650,6 +679,15 @@ class ShapeAnnotationView: BaseAnnotationView {
         tr.center = CGPoint(x: bounds.width, y: 0)
         bl.center = CGPoint(x: 0, y: bounds.height)
         br.center = CGPoint(x: bounds.width, y: bounds.height)
+    }
+
+    private func updateFillColor() {
+        if isFilled {
+            let opacity = max(0.0, min(1.0, fillOpacity))
+            shapeLayer.fillColor = color.withAlphaComponent(opacity).cgColor
+        } else {
+            shapeLayer.fillColor = UIColor.clear.cgColor
+        }
     }
     
     enum Corner { case tl, tr, bl, br, none }
@@ -674,11 +712,39 @@ class ShapeAnnotationView: BaseAnnotationView {
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         if hitsDeleteButton(point) { return true }
         if isSelected && hitTestHandle(point) != .none { return true }
-        return bounds.insetBy(dx: -10, dy: -10).contains(point)
+        return isPointNearStroke(point)
     }
     
     func containsPoint(_ point: CGPoint) -> Bool {
         return self.point(inside: point, with: nil)
+    }
+    
+    private func isPointNearStroke(_ point: CGPoint) -> Bool {
+        // 枠線近傍のみをヒット対象にし、内側中心は他スタンプ選択を優先させる
+        let hitTolerance = max(9, min(16, lineWidth * 5))
+        
+        if shapeType == .circle {
+            let outerRect = bounds.insetBy(dx: -hitTolerance, dy: -hitTolerance)
+            guard outerRect.width > 0, outerRect.height > 0 else { return false }
+            let outerPath = UIBezierPath(ovalIn: outerRect)
+            guard outerPath.contains(point) else { return false }
+            
+            let innerRect = bounds.insetBy(dx: hitTolerance, dy: hitTolerance)
+            if innerRect.width <= 1 || innerRect.height <= 1 {
+                return true
+            }
+            let innerPath = UIBezierPath(ovalIn: innerRect)
+            return !innerPath.contains(point)
+        } else {
+            let outerRect = bounds.insetBy(dx: -hitTolerance, dy: -hitTolerance)
+            guard outerRect.contains(point) else { return false }
+            
+            let innerRect = bounds.insetBy(dx: hitTolerance, dy: hitTolerance)
+            if innerRect.width <= 1 || innerRect.height <= 1 {
+                return true
+            }
+            return !innerRect.contains(point)
+        }
     }
 }
         
@@ -700,6 +766,299 @@ class MarkupOverlayView: UIView {
     }
 }
 
+final class ImageCropMaskView: UIView {
+    enum DragMode {
+        case none
+        case move
+        case resizeTopLeft
+        case resizeTopRight
+        case resizeBottomLeft
+        case resizeBottomRight
+        case resizeTop
+        case resizeBottom
+        case resizeLeft
+        case resizeRight
+    }
+
+    var cropRect: CGRect = .zero {
+        didSet { updateMaskAndHandles() }
+    }
+    var onInteractionBegan: (() -> Void)?
+    var onCropRectChanged: ((CGRect) -> Void)?
+    var onInteractionEnded: (() -> Void)?
+
+    private let dimLayer = CAShapeLayer()
+    private let borderLayer = CAShapeLayer()
+    private var handleViews: [DragMode: UIView] = [:]
+    private let panGesture = UIPanGestureRecognizer()
+
+    private var dragMode: DragMode = .none
+    private var panStartRect: CGRect = .zero
+    private var panStartPoint: CGPoint = .zero
+    private let minSide: CGFloat = 44
+    private let cornerHandleSize: CGFloat = 18
+    private let edgeHandleLength: CGFloat = 34
+    private let edgeHandleThickness: CGFloat = 5
+    private let handleHitRadius: CGFloat = 28
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isUserInteractionEnabled = true
+
+        dimLayer.fillRule = .evenOdd
+        dimLayer.fillColor = UIColor.black.withAlphaComponent(0.42).cgColor
+        layer.addSublayer(dimLayer)
+
+        borderLayer.strokeColor = UIColor.white.withAlphaComponent(0.95).cgColor
+        borderLayer.fillColor = UIColor.clear.cgColor
+        borderLayer.lineWidth = 2
+        borderLayer.lineDashPattern = [6, 4]
+        layer.addSublayer(borderLayer)
+
+        panGesture.addTarget(self, action: #selector(handlePan(_:)))
+        addGestureRecognizer(panGesture)
+
+        [DragMode.resizeTopLeft, .resizeTopRight, .resizeBottomLeft, .resizeBottomRight].forEach { mode in
+            let handle = UIView()
+            handle.backgroundColor = UIColor.white
+            handle.layer.cornerRadius = cornerHandleSize / 2
+            handle.layer.borderWidth = 1
+            handle.layer.borderColor = UIColor.black.withAlphaComponent(0.35).cgColor
+            handle.isUserInteractionEnabled = false
+            addSubview(handle)
+            handleViews[mode] = handle
+        }
+
+        [DragMode.resizeTop, .resizeBottom, .resizeLeft, .resizeRight].forEach { mode in
+            let handle = UIView()
+            handle.backgroundColor = UIColor.white.withAlphaComponent(0.95)
+            handle.layer.cornerRadius = edgeHandleThickness / 2
+            handle.layer.borderWidth = 1
+            handle.layer.borderColor = UIColor.black.withAlphaComponent(0.3).cgColor
+            handle.isUserInteractionEnabled = false
+            addSubview(handle)
+            handleViews[mode] = handle
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateMaskAndHandles()
+    }
+
+    private func updateMaskAndHandles() {
+        let bounded = cropRect.standardized.intersection(bounds)
+        let outer = UIBezierPath(rect: bounds)
+        let inner = UIBezierPath(rect: bounded)
+        outer.append(inner)
+        outer.usesEvenOddFillRule = true
+        dimLayer.path = outer.cgPath
+        borderLayer.path = inner.cgPath
+
+        handleViews[.resizeTopLeft]?.frame = CGRect(
+            x: bounded.minX - cornerHandleSize / 2,
+            y: bounded.minY - cornerHandleSize / 2,
+            width: cornerHandleSize,
+            height: cornerHandleSize
+        )
+        handleViews[.resizeTopRight]?.frame = CGRect(
+            x: bounded.maxX - cornerHandleSize / 2,
+            y: bounded.minY - cornerHandleSize / 2,
+            width: cornerHandleSize,
+            height: cornerHandleSize
+        )
+        handleViews[.resizeBottomLeft]?.frame = CGRect(
+            x: bounded.minX - cornerHandleSize / 2,
+            y: bounded.maxY - cornerHandleSize / 2,
+            width: cornerHandleSize,
+            height: cornerHandleSize
+        )
+        handleViews[.resizeBottomRight]?.frame = CGRect(
+            x: bounded.maxX - cornerHandleSize / 2,
+            y: bounded.maxY - cornerHandleSize / 2,
+            width: cornerHandleSize,
+            height: cornerHandleSize
+        )
+        handleViews[.resizeTop]?.frame = CGRect(
+            x: bounded.midX - edgeHandleLength / 2,
+            y: bounded.minY - edgeHandleThickness / 2,
+            width: edgeHandleLength,
+            height: edgeHandleThickness
+        )
+        handleViews[.resizeBottom]?.frame = CGRect(
+            x: bounded.midX - edgeHandleLength / 2,
+            y: bounded.maxY - edgeHandleThickness / 2,
+            width: edgeHandleLength,
+            height: edgeHandleThickness
+        )
+        handleViews[.resizeLeft]?.frame = CGRect(
+            x: bounded.minX - edgeHandleThickness / 2,
+            y: bounded.midY - edgeHandleLength / 2,
+            width: edgeHandleThickness,
+            height: edgeHandleLength
+        )
+        handleViews[.resizeRight]?.frame = CGRect(
+            x: bounded.maxX - edgeHandleThickness / 2,
+            y: bounded.midY - edgeHandleLength / 2,
+            width: edgeHandleThickness,
+            height: edgeHandleLength
+        )
+    }
+
+    @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
+        let point = gesture.location(in: self)
+        switch gesture.state {
+        case .began:
+            panStartRect = cropRect.standardized
+            panStartPoint = point
+            dragMode = detectDragMode(at: point, rect: panStartRect)
+            if dragMode != .none {
+                onInteractionBegan?()
+            }
+        case .changed:
+            guard dragMode != .none else { return }
+            let delta = CGPoint(x: point.x - panStartPoint.x, y: point.y - panStartPoint.y)
+            let newRect: CGRect
+            switch dragMode {
+            case .move:
+                newRect = movedRect(startRect: panStartRect, delta: delta)
+            case .resizeTopLeft, .resizeTopRight, .resizeBottomLeft, .resizeBottomRight, .resizeTop, .resizeBottom, .resizeLeft, .resizeRight:
+                newRect = resizedRect(startRect: panStartRect, delta: delta, mode: dragMode)
+            case .none:
+                newRect = panStartRect
+            }
+            cropRect = newRect
+            onCropRectChanged?(newRect)
+        case .ended, .cancelled, .failed:
+            if dragMode != .none {
+                onInteractionEnded?()
+            }
+            dragMode = .none
+        default:
+            break
+        }
+    }
+
+    private func detectDragMode(at point: CGPoint, rect: CGRect) -> DragMode {
+        let corners: [(DragMode, CGPoint)] = [
+            (.resizeTopLeft, CGPoint(x: rect.minX, y: rect.minY)),
+            (.resizeTopRight, CGPoint(x: rect.maxX, y: rect.minY)),
+            (.resizeBottomLeft, CGPoint(x: rect.minX, y: rect.maxY)),
+            (.resizeBottomRight, CGPoint(x: rect.maxX, y: rect.maxY))
+        ]
+        for (mode, corner) in corners {
+            let dist = hypot(point.x - corner.x, point.y - corner.y)
+            if dist <= handleHitRadius {
+                return mode
+            }
+        }
+
+        let topArea = CGRect(
+            x: rect.minX + handleHitRadius,
+            y: rect.minY - handleHitRadius,
+            width: max(1, rect.width - handleHitRadius * 2),
+            height: handleHitRadius * 2
+        )
+        if topArea.contains(point) { return .resizeTop }
+
+        let bottomArea = CGRect(
+            x: rect.minX + handleHitRadius,
+            y: rect.maxY - handleHitRadius,
+            width: max(1, rect.width - handleHitRadius * 2),
+            height: handleHitRadius * 2
+        )
+        if bottomArea.contains(point) { return .resizeBottom }
+
+        let leftArea = CGRect(
+            x: rect.minX - handleHitRadius,
+            y: rect.minY + handleHitRadius,
+            width: handleHitRadius * 2,
+            height: max(1, rect.height - handleHitRadius * 2)
+        )
+        if leftArea.contains(point) { return .resizeLeft }
+
+        let rightArea = CGRect(
+            x: rect.maxX - handleHitRadius,
+            y: rect.minY + handleHitRadius,
+            width: handleHitRadius * 2,
+            height: max(1, rect.height - handleHitRadius * 2)
+        )
+        if rightArea.contains(point) { return .resizeRight }
+
+        if rect.insetBy(dx: 14, dy: 14).contains(point) {
+            return .move
+        }
+        return .none
+    }
+
+    private func movedRect(startRect: CGRect, delta: CGPoint) -> CGRect {
+        var rect = startRect.offsetBy(dx: delta.x, dy: delta.y)
+        if rect.minX < bounds.minX { rect.origin.x = bounds.minX }
+        if rect.maxX > bounds.maxX { rect.origin.x = bounds.maxX - rect.width }
+        if rect.minY < bounds.minY { rect.origin.y = bounds.minY }
+        if rect.maxY > bounds.maxY { rect.origin.y = bounds.maxY - rect.height }
+        return rect
+    }
+
+    private func resizedRect(startRect: CGRect, delta: CGPoint, mode: DragMode) -> CGRect {
+        switch mode {
+        case .resizeTopLeft:
+            let anchorX = startRect.maxX
+            let anchorY = startRect.maxY
+            let minX = min(max(startRect.minX + delta.x, bounds.minX), anchorX - minSide)
+            let minY = min(max(startRect.minY + delta.y, bounds.minY), anchorY - minSide)
+            return CGRect(x: minX, y: minY, width: anchorX - minX, height: anchorY - minY)
+
+        case .resizeTopRight:
+            let anchorX = startRect.minX
+            let anchorY = startRect.maxY
+            let maxX = max(min(startRect.maxX + delta.x, bounds.maxX), anchorX + minSide)
+            let minY = min(max(startRect.minY + delta.y, bounds.minY), anchorY - minSide)
+            return CGRect(x: anchorX, y: minY, width: maxX - anchorX, height: anchorY - minY)
+
+        case .resizeBottomLeft:
+            let anchorX = startRect.maxX
+            let anchorY = startRect.minY
+            let minX = min(max(startRect.minX + delta.x, bounds.minX), anchorX - minSide)
+            let maxY = max(min(startRect.maxY + delta.y, bounds.maxY), anchorY + minSide)
+            return CGRect(x: minX, y: anchorY, width: anchorX - minX, height: maxY - anchorY)
+
+        case .resizeBottomRight:
+            let anchorX = startRect.minX
+            let anchorY = startRect.minY
+            let maxX = max(min(startRect.maxX + delta.x, bounds.maxX), anchorX + minSide)
+            let maxY = max(min(startRect.maxY + delta.y, bounds.maxY), anchorY + minSide)
+            return CGRect(x: anchorX, y: anchorY, width: maxX - anchorX, height: maxY - anchorY)
+
+        case .resizeTop:
+            let anchorY = startRect.maxY
+            let minY = min(max(startRect.minY + delta.y, bounds.minY), anchorY - minSide)
+            return CGRect(x: startRect.minX, y: minY, width: startRect.width, height: anchorY - minY)
+
+        case .resizeBottom:
+            let anchorY = startRect.minY
+            let maxY = max(min(startRect.maxY + delta.y, bounds.maxY), anchorY + minSide)
+            return CGRect(x: startRect.minX, y: anchorY, width: startRect.width, height: maxY - anchorY)
+
+        case .resizeLeft:
+            let anchorX = startRect.maxX
+            let minX = min(max(startRect.minX + delta.x, bounds.minX), anchorX - minSide)
+            return CGRect(x: minX, y: startRect.minY, width: anchorX - minX, height: startRect.height)
+
+        case .resizeRight:
+            let anchorX = startRect.minX
+            let maxX = max(min(startRect.maxX + delta.x, bounds.maxX), anchorX + minSide)
+            return CGRect(x: anchorX, y: startRect.minY, width: maxX - anchorX, height: startRect.height)
+
+        default:
+            return startRect
+        }
+    }
+}
+
 
 class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPickerObserver, MarkupToolbarDelegate, UIGestureRecognizerDelegate {
     
@@ -709,6 +1068,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     var initialData: MarkupData?
     
     var onSave: ((PKDrawing, MarkupData, UIImage) -> Void)?
+    var onSaveEditedImage: ((UIImage?) -> Void)?
     var onCancel: (() -> Void)?
     var onDirtyChange: ((Bool) -> Void)?
     
@@ -727,6 +1087,43 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     let canvasView = PKCanvasView()
     let overlayView = MarkupOverlayView() // Hosts BaseAnnotationView
     let toolbar = MarkupToolbar()
+
+    // Image adjustment panel (base image editing)
+    private let imageAdjustPanel = UIView()
+    private let saturationSlider = UISlider()
+    private let opacitySlider = UISlider()
+    private let cropResetButton = UIButton(type: .system)
+    private let cropScaleSlider = UISlider()
+    private let cropOffsetXSlider = UISlider()
+    private let cropOffsetYSlider = UISlider()
+    private let saturationValueLabel = UILabel()
+    private let opacityValueLabel = UILabel()
+    private let cropScaleValueLabel = UILabel()
+    private let cropOffsetXValueLabel = UILabel()
+    private let cropOffsetYValueLabel = UILabel()
+    private let cropMaskView = ImageCropMaskView()
+    private var isImageAdjustPanelVisible = false
+    private var imageSaturationLevel: CGFloat = 1.0 // 0...1 (0%...100%)
+    private var imageOpacityLevel: CGFloat = 1.0 // 0...1 (0%...100%)
+    private var imageCropScaleX: CGFloat = 1.0 // 1.0=ノートリム
+    private var imageCropScaleY: CGFloat = 1.0 // 1.0=ノートリム
+    private var imageCropOffsetX: CGFloat = 0.0 // -1...1
+    private var imageCropOffsetY: CGFloat = 0.0 // -1...1
+    private var baseImageOriginal: UIImage?
+    private var hasImageAdjustmentChanges = false
+    private let ciContext = CIContext(options: nil)
+
+    private struct ImageAdjustmentState: Equatable {
+        var saturation: CGFloat
+        var opacity: CGFloat
+        var cropScaleX: CGFloat
+        var cropScaleY: CGFloat
+        var cropOffsetX: CGFloat
+        var cropOffsetY: CGFloat
+    }
+    private var imageAdjustmentUndoStack: [ImageAdjustmentState] = []
+    private var imageAdjustmentRedoStack: [ImageAdjustmentState] = []
+    private var cropInteractionStartState: ImageAdjustmentState?
     
     // Toast Notification
     private let toastContainer = UIView()
@@ -742,11 +1139,12 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     private var currentFontSize: CGFloat = 16 // Default Small
     private var currentArrowStyle: ArrowStyle = .oneWay
     private var currentMarkerWidth: CGFloat = 10 // Default Thin
-    private var currentPenWidth: CGFloat = 1 // Default Medium
+    private var currentPenWidth: CGFloat = 0.5 // Default Smallest
+    private var currentShapeFillOpacity: CGFloat = 0.0
     private var currentStamp: StampType = .check
     private var currentStampScale: CGFloat = 0.5 // Default Small
     private var currentNumberShape: NumberShape = .circle // Default Number Shape
-    private var currentNumberStampScale: CGFloat = 0.5 // Number stamp L (old S size)
+    private var currentNumberStampScale: CGFloat = 0.25 // Number stamp default S
     private var currentNumberVisible: Bool = true
     private var currentNumberFillOpacity: CGFloat = 1.0
     private var currentNumberRotation: CGFloat = 0
@@ -785,6 +1183,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
             
             // Toolbar Layout handled by Auto Layout in setupViews()
             view.bringSubviewToFront(toolbar)
+            view.bringSubviewToFront(imageAdjustPanel)
             
             let rect = AVMakeRect(aspectRatio: image?.size ?? .zero, insideRect: imageView.bounds)
             if rect.width > 0 && !isDataLoaded {
@@ -793,6 +1192,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
                 isDataLoaded = true
             }
         }
+        updateCropMaskPreview()
     }
     
     func updateContentFrame() {
@@ -801,7 +1201,9 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         imageView.frame = contentView.bounds
         canvasView.frame = contentView.bounds
         overlayView.frame = contentView.bounds
+        cropMaskView.frame = contentView.bounds
         scrollView.contentSize = view.bounds.size
+        updateCropMaskPreview()
     }
     
     // MARK: - Setup
@@ -812,6 +1214,21 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         contentView.addSubview(imageView)
         contentView.addSubview(canvasView)
         contentView.addSubview(overlayView)
+        contentView.addSubview(cropMaskView)
+        cropMaskView.onInteractionBegan = { [weak self] in
+            self?.cropInteractionStartState = self?.currentImageAdjustmentState
+        }
+        cropMaskView.onCropRectChanged = { [weak self] rect in
+            self?.handleCropRectChangedFromOverlay(rect)
+        }
+        cropMaskView.onInteractionEnded = { [weak self] in
+            guard let self else { return }
+            if let start = self.cropInteractionStartState {
+                self.recordImageAdjustmentChange(from: start)
+            }
+            self.cropInteractionStartState = nil
+        }
+        cropMaskView.isUserInteractionEnabled = false
         
         // Toolbar with Auto Layout
         toolbar.translatesAutoresizingMaskIntoConstraints = false
@@ -839,11 +1256,12 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         toolbar.delegate = self
         
         imageView.contentMode = .scaleAspectFit
-        imageView.image = image
+        baseImageOriginal = image
+        imageView.image = baseImageOriginal
         
         scrollView.delegate = self
         scrollView.minimumZoomScale = 1.0
-        scrollView.maximumZoomScale = 5.0
+        scrollView.maximumZoomScale = 15.0
         scrollView.bouncesZoom = true
         
         // Fix: Allow 1-finger drawing (Overlay/Canvas) but require 2 fingers for scrolling
@@ -852,6 +1270,8 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         
         // Setup Toast Notification
         setupToast()
+        setupImageAdjustPanel()
+        applyImageAdjustmentPreview()
     }
     
     func setupCanvas() {
@@ -876,6 +1296,556 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         pan.maximumNumberOfTouches = 1
         pan.delegate = self // Allow concurrent recognition
         overlayView.addGestureRecognizer(pan)
+    }
+
+    private func setupImageAdjustPanel() {
+        imageAdjustPanel.backgroundColor = UIColor.black.withAlphaComponent(0.82)
+        imageAdjustPanel.layer.cornerRadius = 14
+        imageAdjustPanel.layer.borderWidth = 1
+        imageAdjustPanel.layer.borderColor = UIColor.white.withAlphaComponent(0.15).cgColor
+        imageAdjustPanel.isHidden = true
+        imageAdjustPanel.alpha = 0
+        imageAdjustPanel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(imageAdjustPanel)
+
+        NSLayoutConstraint.activate([
+            imageAdjustPanel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            imageAdjustPanel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            imageAdjustPanel.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            imageAdjustPanel.widthAnchor.constraint(equalToConstant: 280)
+        ])
+
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        imageAdjustPanel.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: imageAdjustPanel.leadingAnchor, constant: 10),
+            stack.trailingAnchor.constraint(equalTo: imageAdjustPanel.trailingAnchor, constant: -10),
+            stack.topAnchor.constraint(equalTo: imageAdjustPanel.topAnchor, constant: 10),
+            stack.bottomAnchor.constraint(equalTo: imageAdjustPanel.bottomAnchor, constant: -10)
+        ])
+
+        stack.addArrangedSubview(makeImageAdjustRow(
+            iconName: "sun.max.fill",
+            slider: saturationSlider,
+            valueLabel: saturationValueLabel,
+            minimum: 0,
+            maximum: 100,
+            initial: 100,
+            action: #selector(handleSaturationSliderChanged(_:))
+        ))
+        stack.addArrangedSubview(makeImageAdjustRow(
+            iconName: "circle.lefthalf.filled",
+            slider: opacitySlider,
+            valueLabel: opacityValueLabel,
+            minimum: 0,
+            maximum: 100,
+            initial: 100,
+            action: #selector(handleOpacitySliderChanged(_:))
+        ))
+
+        let cropRow = UIStackView()
+        cropRow.axis = .horizontal
+        cropRow.spacing = 8
+        cropRow.alignment = .center
+
+        let cropIcon = UIImageView(image: UIImage(systemName: "crop"))
+        cropIcon.tintColor = .white
+        cropIcon.contentMode = .scaleAspectFit
+        cropIcon.translatesAutoresizingMaskIntoConstraints = false
+        cropRow.addArrangedSubview(cropIcon)
+        NSLayoutConstraint.activate([
+            cropIcon.widthAnchor.constraint(equalToConstant: 15),
+            cropIcon.heightAnchor.constraint(equalToConstant: 15)
+        ])
+
+        let cropLabel = UILabel()
+        cropLabel.text = "枠をドラッグして調整"
+        cropLabel.textColor = UIColor.white.withAlphaComponent(0.92)
+        cropLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        cropRow.addArrangedSubview(cropLabel)
+
+        let cropSpacer = UIView()
+        cropRow.addArrangedSubview(cropSpacer)
+
+        cropResetButton.setTitle("リセット", for: .normal)
+        cropResetButton.setTitleColor(UIColor.white, for: .normal)
+        cropResetButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .bold)
+        cropResetButton.backgroundColor = UIColor.white.withAlphaComponent(0.16)
+        cropResetButton.layer.cornerRadius = 9
+        cropResetButton.contentEdgeInsets = UIEdgeInsets(top: 4, left: 10, bottom: 4, right: 10)
+        cropResetButton.addTarget(self, action: #selector(handleCropResetTapped), for: .touchUpInside)
+        cropRow.addArrangedSubview(cropResetButton)
+
+        stack.addArrangedSubview(cropRow)
+
+        // Internal controls retained for state synchronization (UIには表示しない)
+        cropScaleSlider.minimumValue = 30
+        cropScaleSlider.maximumValue = 100
+        cropOffsetXSlider.minimumValue = -100
+        cropOffsetXSlider.maximumValue = 100
+        cropOffsetYSlider.minimumValue = -100
+        cropOffsetYSlider.maximumValue = 100
+
+        syncImageAdjustmentControlValues()
+        updateImageAdjustLabels()
+        updateCropMaskPreview()
+    }
+
+    private func makeImageAdjustRow(
+        iconName: String,
+        slider: UISlider,
+        valueLabel: UILabel,
+        minimum: Float,
+        maximum: Float,
+        initial: Float,
+        action: Selector
+    ) -> UIStackView {
+        let row = UIStackView()
+        row.axis = .horizontal
+        row.spacing = 8
+        row.alignment = .center
+
+        let icon = UIImageView(image: UIImage(systemName: iconName))
+        icon.tintColor = .white
+        icon.contentMode = .scaleAspectFit
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        row.addArrangedSubview(icon)
+        NSLayoutConstraint.activate([
+            icon.widthAnchor.constraint(equalToConstant: 15),
+            icon.heightAnchor.constraint(equalToConstant: 15)
+        ])
+
+        slider.minimumValue = minimum
+        slider.maximumValue = maximum
+        slider.value = initial
+        slider.minimumTrackTintColor = UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0)
+        slider.maximumTrackTintColor = UIColor.white.withAlphaComponent(0.25)
+        slider.addTarget(self, action: action, for: .valueChanged)
+        row.addArrangedSubview(slider)
+
+        valueLabel.textColor = .white
+        valueLabel.font = .systemFont(ofSize: 12, weight: .bold)
+        valueLabel.textAlignment = .right
+        valueLabel.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        row.addArrangedSubview(valueLabel)
+
+        return row
+    }
+
+    func toggleImageAdjustPanel() {
+        isImageAdjustPanelVisible.toggle()
+        cropMaskView.isUserInteractionEnabled = isImageAdjustPanelVisible
+        if isImageAdjustPanelVisible {
+            imageAdjustPanel.isHidden = false
+        }
+        UIView.animate(withDuration: 0.2, animations: {
+            self.imageAdjustPanel.alpha = self.isImageAdjustPanelVisible ? 1.0 : 0.0
+        }, completion: { _ in
+            if !self.isImageAdjustPanelVisible {
+                self.imageAdjustPanel.isHidden = true
+            }
+            self.updateCropMaskPreview()
+        })
+        updateCropMaskPreview()
+    }
+
+    @objc private func handleSaturationSliderChanged(_ sender: UISlider) {
+        let previousState = currentImageAdjustmentState
+        let stepped = round(sender.value / 10) * 10
+        sender.setValue(stepped, animated: false)
+        imageSaturationLevel = CGFloat(stepped) / 100.0
+        applyImageAdjustmentPreview()
+        recordImageAdjustmentChange(from: previousState)
+    }
+
+    @objc private func handleOpacitySliderChanged(_ sender: UISlider) {
+        let previousState = currentImageAdjustmentState
+        let stepped = round(sender.value / 10) * 10
+        sender.setValue(stepped, animated: false)
+        imageOpacityLevel = CGFloat(stepped) / 100.0
+        applyImageAdjustmentPreview()
+        recordImageAdjustmentChange(from: previousState)
+    }
+
+    @objc private func handleCropResetTapped() {
+        let previousState = currentImageAdjustmentState
+        imageCropScaleX = 1.0
+        imageCropScaleY = 1.0
+        imageCropOffsetX = 0.0
+        imageCropOffsetY = 0.0
+        syncImageAdjustmentControlValues()
+        applyImageAdjustmentPreview()
+        recordImageAdjustmentChange(from: previousState)
+    }
+
+    @objc private func handleCropScaleSliderChanged(_ sender: UISlider) {
+        let previousState = currentImageAdjustmentState
+        let stepped = round(sender.value)
+        sender.setValue(stepped, animated: false)
+        let snapped = max(0.3, min(1.0, CGFloat(stepped) / 100.0))
+        imageCropScaleX = snapped
+        imageCropScaleY = snapped
+        if snapped >= 0.999 {
+            imageCropScaleX = 1.0
+            imageCropScaleY = 1.0
+            imageCropOffsetX = 0.0
+            imageCropOffsetY = 0.0
+        }
+        syncImageAdjustmentControlValues()
+        applyImageAdjustmentPreview()
+        recordImageAdjustmentChange(from: previousState)
+    }
+
+    @objc private func handleCropOffsetXSliderChanged(_ sender: UISlider) {
+        let previousState = currentImageAdjustmentState
+        let stepped = round(sender.value)
+        sender.setValue(stepped, animated: false)
+        imageCropOffsetX = max(-1.0, min(1.0, CGFloat(stepped) / 100.0))
+        applyImageAdjustmentPreview()
+        recordImageAdjustmentChange(from: previousState)
+    }
+
+    @objc private func handleCropOffsetYSliderChanged(_ sender: UISlider) {
+        let previousState = currentImageAdjustmentState
+        let stepped = round(sender.value)
+        sender.setValue(stepped, animated: false)
+        imageCropOffsetY = max(-1.0, min(1.0, CGFloat(stepped) / 100.0))
+        applyImageAdjustmentPreview()
+        recordImageAdjustmentChange(from: previousState)
+    }
+
+    private var currentImageAdjustmentState: ImageAdjustmentState {
+        ImageAdjustmentState(
+            saturation: imageSaturationLevel,
+            opacity: imageOpacityLevel,
+            cropScaleX: imageCropScaleX,
+            cropScaleY: imageCropScaleY,
+            cropOffsetX: imageCropOffsetX,
+            cropOffsetY: imageCropOffsetY
+        )
+    }
+
+    private func applyImageAdjustmentState(_ state: ImageAdjustmentState, markDirty: Bool) {
+        imageSaturationLevel = state.saturation
+        imageOpacityLevel = state.opacity
+        imageCropScaleX = max(0.3, min(1.0, state.cropScaleX))
+        imageCropScaleY = max(0.3, min(1.0, state.cropScaleY))
+        imageCropOffsetX = max(-1.0, min(1.0, state.cropOffsetX))
+        imageCropOffsetY = max(-1.0, min(1.0, state.cropOffsetY))
+        if imageCropScaleX >= 0.999 && imageCropScaleY >= 0.999 {
+            imageCropScaleX = 1.0
+            imageCropScaleY = 1.0
+            imageCropOffsetX = 0.0
+            imageCropOffsetY = 0.0
+        }
+        syncImageAdjustmentControlValues()
+        applyImageAdjustmentPreview()
+        if markDirty {
+            saveState()
+        }
+    }
+
+    private func recordImageAdjustmentChange(from previousState: ImageAdjustmentState) {
+        let currentState = currentImageAdjustmentState
+        guard currentState != previousState else { return }
+        imageAdjustmentUndoStack.append(previousState)
+        imageAdjustmentRedoStack.removeAll()
+        saveState()
+    }
+
+    private func syncImageAdjustmentControlValues() {
+        saturationSlider.setValue(Float((imageSaturationLevel * 100).rounded()), animated: false)
+        opacitySlider.setValue(Float((imageOpacityLevel * 100).rounded()), animated: false)
+        let unifiedScale = min(imageCropScaleX, imageCropScaleY)
+        cropScaleSlider.setValue(Float((unifiedScale * 100).rounded()), animated: false)
+        cropOffsetXSlider.setValue(Float((imageCropOffsetX * 100).rounded()), animated: false)
+        cropOffsetYSlider.setValue(Float((imageCropOffsetY * 100).rounded()), animated: false)
+
+        let cropEnabled = imageCropScaleX < 0.999 || imageCropScaleY < 0.999
+        cropOffsetXSlider.isEnabled = cropEnabled
+        cropOffsetYSlider.isEnabled = cropEnabled
+        cropOffsetXSlider.alpha = cropEnabled ? 1.0 : 0.45
+        cropOffsetYSlider.alpha = cropEnabled ? 1.0 : 0.45
+    }
+
+    private func undoImageAdjustmentIfNeeded() -> Bool {
+        guard let previousState = imageAdjustmentUndoStack.popLast() else { return false }
+        imageAdjustmentRedoStack.append(currentImageAdjustmentState)
+        applyImageAdjustmentState(previousState, markDirty: true)
+        return true
+    }
+
+    private func redoImageAdjustmentIfNeeded() -> Bool {
+        guard let redoState = imageAdjustmentRedoStack.popLast() else { return false }
+        imageAdjustmentUndoStack.append(currentImageAdjustmentState)
+        applyImageAdjustmentState(redoState, markDirty: true)
+        return true
+    }
+
+    private func isCropAdjustmentActive() -> Bool {
+        imageCropScaleX < 0.999 || imageCropScaleY < 0.999
+    }
+
+    private func currentCropRect(in size: CGSize) -> CGRect {
+        guard size.width > 0, size.height > 0 else { return .zero }
+        let normalizedScaleX = max(0.3, min(1.0, imageCropScaleX))
+        let normalizedScaleY = max(0.3, min(1.0, imageCropScaleY))
+        if normalizedScaleX >= 0.999 && normalizedScaleY >= 0.999 {
+            return CGRect(origin: .zero, size: size)
+        }
+
+        let cropWidth = size.width * normalizedScaleX
+        let cropHeight = size.height * normalizedScaleY
+        let marginX = (size.width - cropWidth) / 2.0
+        let marginY = (size.height - cropHeight) / 2.0
+        let centerX = size.width / 2.0 + marginX * max(-1.0, min(1.0, imageCropOffsetX))
+        let centerY = size.height / 2.0 + marginY * max(-1.0, min(1.0, imageCropOffsetY))
+        let originX = max(0, min(size.width - cropWidth, centerX - cropWidth / 2.0))
+        let originY = max(0, min(size.height - cropHeight, centerY - cropHeight / 2.0))
+        return CGRect(x: originX, y: originY, width: cropWidth, height: cropHeight).integral
+    }
+
+    private func handleCropRectChangedFromOverlay(_ displayCropRect: CGRect) {
+        guard let original = baseImageOriginal else { return }
+        let imageDisplayRect = AVMakeRect(aspectRatio: original.size, insideRect: imageView.bounds)
+        guard imageDisplayRect.width > 1, imageDisplayRect.height > 1 else { return }
+
+        let clipped = displayCropRect.intersection(imageDisplayRect)
+        guard !clipped.isNull, clipped.width > 1, clipped.height > 1 else { return }
+
+        let imageCropRect = CGRect(
+            x: (clipped.minX - imageDisplayRect.minX) / imageDisplayRect.width * original.size.width,
+            y: (clipped.minY - imageDisplayRect.minY) / imageDisplayRect.height * original.size.height,
+            width: clipped.width / imageDisplayRect.width * original.size.width,
+            height: clipped.height / imageDisplayRect.height * original.size.height
+        )
+
+        let normalizedScaleX = max(0.3, min(1.0, imageCropRect.width / max(1, original.size.width)))
+        let normalizedScaleY = max(0.3, min(1.0, imageCropRect.height / max(1, original.size.height)))
+        imageCropScaleX = normalizedScaleX
+        imageCropScaleY = normalizedScaleY
+
+        if imageCropScaleX >= 0.999 && imageCropScaleY >= 0.999 {
+            imageCropScaleX = 1.0
+            imageCropScaleY = 1.0
+            imageCropOffsetX = 0
+            imageCropOffsetY = 0
+        } else {
+            let centerX = imageCropRect.midX
+            let centerY = imageCropRect.midY
+            let marginX = (original.size.width - imageCropRect.width) / 2.0
+            let marginY = (original.size.height - imageCropRect.height) / 2.0
+            imageCropOffsetX = marginX > 0.001 ? max(-1.0, min(1.0, (centerX - original.size.width / 2.0) / marginX)) : 0
+            imageCropOffsetY = marginY > 0.001 ? max(-1.0, min(1.0, (centerY - original.size.height / 2.0) / marginY)) : 0
+        }
+
+        syncImageAdjustmentControlValues()
+        applyImageAdjustmentPreview()
+    }
+
+    private func updateCropMaskPreview() {
+        guard let original = baseImageOriginal else {
+            cropMaskView.isHidden = true
+            return
+        }
+        guard isImageAdjustPanelVisible else {
+            cropMaskView.isHidden = true
+            return
+        }
+
+        let imageDisplayRect = AVMakeRect(aspectRatio: original.size, insideRect: imageView.bounds)
+        guard imageDisplayRect.width > 0, imageDisplayRect.height > 0 else {
+            cropMaskView.isHidden = true
+            return
+        }
+
+        let cropRect = currentCropRect(in: original.size)
+        let scaleX = imageDisplayRect.width / original.size.width
+        let scaleY = imageDisplayRect.height / original.size.height
+        let shownCropRect = CGRect(
+            x: imageDisplayRect.minX + cropRect.minX * scaleX,
+            y: imageDisplayRect.minY + cropRect.minY * scaleY,
+            width: cropRect.width * scaleX,
+            height: cropRect.height * scaleY
+        )
+        cropMaskView.cropRect = shownCropRect
+        cropMaskView.isHidden = false
+    }
+
+    private func updateImageAdjustLabels() {
+        saturationValueLabel.text = "\(Int((imageSaturationLevel * 100).rounded()))%"
+        opacityValueLabel.text = "\(Int((imageOpacityLevel * 100).rounded()))%"
+        let avgScale = ((imageCropScaleX + imageCropScaleY) * 0.5)
+        cropScaleValueLabel.text = "\(Int((avgScale * 100).rounded()))%"
+        cropOffsetXValueLabel.text = String(format: "%+d", Int((imageCropOffsetX * 100).rounded()))
+        cropOffsetYValueLabel.text = String(format: "%+d", Int((imageCropOffsetY * 100).rounded()))
+    }
+
+    private func applyImageAdjustmentPreview() {
+        guard let original = baseImageOriginal else { return }
+        let saturated = imageByApplyingSaturation(to: original, saturation: imageSaturationLevel)
+        imageView.image = saturated
+        imageView.alpha = imageOpacityLevel
+        hasImageAdjustmentChanges = abs(imageSaturationLevel - 1.0) > 0.001
+            || abs(imageOpacityLevel - 1.0) > 0.001
+            || isCropAdjustmentActive()
+        updateImageAdjustLabels()
+        updateCropMaskPreview()
+    }
+
+    private func imageByApplyingSaturation(to image: UIImage, saturation: CGFloat) -> UIImage {
+        guard let ciInput = CIImage(image: image),
+              let filter = CIFilter(name: "CIColorControls") else {
+            return image
+        }
+        filter.setValue(ciInput, forKey: kCIInputImageKey)
+        filter.setValue(saturation, forKey: kCIInputSaturationKey)
+        guard let output = filter.outputImage,
+              let cg = ciContext.createCGImage(output, from: output.extent) else {
+            return image
+        }
+        return UIImage(cgImage: cg, scale: image.scale, orientation: image.imageOrientation)
+    }
+
+    private func renderedAdjustedImageForSave() -> UIImage? {
+        guard let original = baseImageOriginal else { return nil }
+        var outputImage = imageByApplyingSaturation(to: original, saturation: imageSaturationLevel)
+
+        if isCropAdjustmentActive() {
+            let cropRect = currentCropRect(in: outputImage.size)
+            if cropRect.width > 1, cropRect.height > 1 {
+                let cropRenderer = UIGraphicsImageRenderer(size: cropRect.size)
+                outputImage = cropRenderer.image { _ in
+                    outputImage.draw(at: CGPoint(x: -cropRect.minX, y: -cropRect.minY))
+                }
+            }
+        }
+
+        guard imageOpacityLevel < 0.999 else { return outputImage }
+        let renderer = UIGraphicsImageRenderer(size: outputImage.size)
+        return renderer.image { ctx in
+            UIColor.white.setFill()
+            ctx.fill(CGRect(origin: .zero, size: outputImage.size))
+            outputImage.draw(
+                in: CGRect(origin: .zero, size: outputImage.size),
+                blendMode: .normal,
+                alpha: imageOpacityLevel
+            )
+        }
+    }
+
+    private func adjustedMarkupDataForCrop(
+        _ data: MarkupData,
+        originalSize: CGSize,
+        cropRect: CGRect
+    ) -> MarkupData {
+        guard cropRect.width > 1, cropRect.height > 1 else { return data }
+
+        let adjustedTexts: [TextAnnotationModel] = data.texts.compactMap { item in
+            let rect = CGRect(
+                x: item.x * originalSize.width,
+                y: item.y * originalSize.height,
+                width: item.width * originalSize.width,
+                height: item.height * originalSize.height
+            )
+            let clipped = rect.intersection(cropRect)
+            guard !clipped.isNull, clipped.width > 1, clipped.height > 1 else { return nil }
+            return TextAnnotationModel(
+                id: item.id,
+                text: item.text,
+                fontSize: item.fontSize,
+                x: (clipped.minX - cropRect.minX) / cropRect.width,
+                y: (clipped.minY - cropRect.minY) / cropRect.height,
+                width: clipped.width / cropRect.width,
+                height: clipped.height / cropRect.height,
+                colorHex: item.colorHex
+            )
+        }
+
+        let adjustedShapes: [ShapeAnnotationModel] = data.shapes.compactMap { item in
+            let rect = CGRect(
+                x: item.x * originalSize.width,
+                y: item.y * originalSize.height,
+                width: item.width * originalSize.width,
+                height: item.height * originalSize.height
+            )
+            let clipped = rect.intersection(cropRect)
+            guard !clipped.isNull, clipped.width > 1, clipped.height > 1 else { return nil }
+            return ShapeAnnotationModel(
+                id: item.id,
+                type: item.type,
+                x: (clipped.minX - cropRect.minX) / cropRect.width,
+                y: (clipped.minY - cropRect.minY) / cropRect.height,
+                width: clipped.width / cropRect.width,
+                height: clipped.height / cropRect.height,
+                colorHex: item.colorHex,
+                lineWidth: item.lineWidth,
+                isFilled: item.isFilled,
+                fillOpacity: item.fillOpacity
+            )
+        }
+
+        let adjustedArrows: [ArrowAnnotationModel] = data.arrows.compactMap { item in
+            let start = CGPoint(x: item.startX * originalSize.width, y: item.startY * originalSize.height)
+            let end = CGPoint(x: item.endX * originalSize.width, y: item.endY * originalSize.height)
+            let lineBounds = CGRect(
+                x: min(start.x, end.x),
+                y: min(start.y, end.y),
+                width: abs(end.x - start.x),
+                height: abs(end.y - start.y)
+            ).insetBy(dx: -2, dy: -2)
+            guard lineBounds.intersects(cropRect) else { return nil }
+
+            let clampedStart = CGPoint(
+                x: min(max(start.x, cropRect.minX), cropRect.maxX),
+                y: min(max(start.y, cropRect.minY), cropRect.maxY)
+            )
+            let clampedEnd = CGPoint(
+                x: min(max(end.x, cropRect.minX), cropRect.maxX),
+                y: min(max(end.y, cropRect.minY), cropRect.maxY)
+            )
+            if hypot(clampedEnd.x - clampedStart.x, clampedEnd.y - clampedStart.y) < 1 {
+                return nil
+            }
+            return ArrowAnnotationModel(
+                id: item.id,
+                startX: (clampedStart.x - cropRect.minX) / cropRect.width,
+                startY: (clampedStart.y - cropRect.minY) / cropRect.height,
+                endX: (clampedEnd.x - cropRect.minX) / cropRect.width,
+                endY: (clampedEnd.y - cropRect.minY) / cropRect.height,
+                colorHex: item.colorHex,
+                lineWidth: item.lineWidth,
+                style: item.style
+            )
+        }
+
+        let adjustedStamps: [StampAnnotationModel] = data.stamps.compactMap { item in
+            let point = CGPoint(x: item.x * originalSize.width, y: item.y * originalSize.height)
+            guard cropRect.contains(point) else { return nil }
+            return StampAnnotationModel(
+                id: item.id,
+                stampType: item.stampType,
+                x: (point.x - cropRect.minX) / cropRect.width,
+                y: (point.y - cropRect.minY) / cropRect.height,
+                colorHex: item.colorHex,
+                scale: item.scale,
+                numberValue: item.numberValue,
+                numberShape: item.numberShape,
+                numberVisible: item.numberVisible,
+                numberFillOpacity: item.numberFillOpacity,
+                numberRotation: item.numberRotation
+            )
+        }
+
+        return MarkupData(
+            texts: adjustedTexts,
+            arrows: adjustedArrows,
+            shapes: adjustedShapes,
+            stamps: adjustedStamps
+        )
     }
     
     // MARK: - Toast Notification
@@ -1049,7 +2019,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     }
     
     func save() {
-        guard let image = image else { return }
+        guard let image = (baseImageOriginal ?? image) else { return }
         
         // Calc rect
         let rect = (lastLayoutRect.width > 0) ? lastLayoutRect : AVMakeRect(aspectRatio: image.size, insideRect: imageView.bounds)
@@ -1107,7 +2077,9 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
                     type: (sv.shapeType == .circle) ? "circle" : "rect",
                     x: normX, y: normY, width: normW, height: normH,
                     colorHex: sv.color.toHex(),
-                    lineWidth: sv.lineWidth
+                    lineWidth: sv.lineWidth,
+                    isFilled: sv.isFilled,
+                    fillOpacity: sv.fillOpacity
                 ))
             } else if let stamp = view as? StampAnnotationView {
                 let normX = (stamp.center.x - rect.minX) / rect.width
@@ -1140,18 +2112,35 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
             }
         }
         
-        let data = MarkupData(texts: texts, arrows: arrows, shapes: shapes, stamps: stamps)
-        
+        var outputData = MarkupData(texts: texts, arrows: arrows, shapes: shapes, stamps: stamps)
+        var outputDrawing = savedDrawing
+        var outputImageSize = image.size
+
+        if isCropAdjustmentActive() {
+            let cropRect = currentCropRect(in: image.size)
+            if cropRect.width > 1, cropRect.height > 1 {
+                outputData = adjustedMarkupDataForCrop(outputData, originalSize: image.size, cropRect: cropRect)
+                let translate = CGAffineTransform(translationX: -cropRect.minX, y: -cropRect.minY)
+                outputDrawing = savedDrawing.transformed(using: translate)
+                outputImageSize = cropRect.size
+            }
+        }
+
+        let renderTexts = outputData.texts
+        let renderArrows = outputData.arrows
+        let renderShapes = outputData.shapes
+        let renderStamps = outputData.stamps
+
         // Render Image
-        let renderer = UIGraphicsImageRenderer(size: image.size)
+        let renderer = UIGraphicsImageRenderer(size: outputImageSize)
         let overlayImage = renderer.image { ctx in
             // Render logic aligned with View implementation
             
-            for t in texts {
-                let x = t.x * image.size.width
-                let y = t.y * image.size.height
-                let w = t.width * image.size.width
-                let h = t.height * image.size.height
+            for t in renderTexts {
+                let x = t.x * outputImageSize.width
+                let y = t.y * outputImageSize.height
+                let w = t.width * outputImageSize.width
+                let h = t.height * outputImageSize.height
                 let fontSize = t.fontSize
                 
                 let rect = CGRect(x: x, y: y, width: w, height: h)
@@ -1167,16 +2156,16 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
                 t.text.draw(in: textRect, withAttributes: attrs)
             }
             
-            for a in arrows {
-                let start = CGPoint(x: a.startX * image.size.width, y: a.startY * image.size.height)
-                let end = CGPoint(x: a.endX * image.size.width, y: a.endY * image.size.height)
+            for a in renderArrows {
+                let start = CGPoint(x: a.startX * outputImageSize.width, y: a.startY * outputImageSize.height)
+                let end = CGPoint(x: a.endX * outputImageSize.width, y: a.endY * outputImageSize.height)
                 
                 let path = UIBezierPath()
                 path.move(to: start)
                 path.addLine(to: end)
                 
-                let arrowLen: CGFloat = 20.0 / scale
-                let arrowAngle: CGFloat = .pi / 6
+                let arrowLen: CGFloat = ArrowAnnotationView.headLength / scale
+                let arrowAngle: CGFloat = ArrowAnnotationView.headAngle
                 
                 // End Arrow
                 if a.style == .oneWay || a.style == .twoWay {
@@ -1218,11 +2207,11 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
                 path.stroke()
             }
             
-            for s in shapes {
-                let x = s.x * image.size.width
-                let y = s.y * image.size.height
-                let w = s.width * image.size.width
-                let h = s.height * image.size.height
+            for s in renderShapes {
+                let x = s.x * outputImageSize.width
+                let y = s.y * outputImageSize.height
+                let w = s.width * outputImageSize.width
+                let h = s.height * outputImageSize.height
                 let rect = CGRect(x: x, y: y, width: w, height: h)
                 
                 let path: UIBezierPath
@@ -1231,6 +2220,12 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
                 } else {
                     path = UIBezierPath(rect: rect)
                 }
+
+                if s.isFilled == true {
+                    let fillOpacity = max(0.0, min(1.0, s.fillOpacity ?? 1.0))
+                    s.uicolor.withAlphaComponent(fillOpacity).setFill()
+                    path.fill()
+                }
                 
                 s.uicolor.setStroke()
                 // Fix: Scale line width for image resolution
@@ -1238,9 +2233,9 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
                 path.stroke()
             }
             
-            for stamp in stamps {
-                let centerX = stamp.x * image.size.width
-                let centerY = stamp.y * image.size.height
+            for stamp in renderStamps {
+                let centerX = stamp.x * outputImageSize.width
+                let centerY = stamp.y * outputImageSize.height
                 
                 // 番号スタンプ（新形式 + 旧形式の互換読み込み）
                 if let num = stamp.numberValue,
@@ -1333,11 +2328,20 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
             }
         }
         
-        onSave?(savedDrawing, data, overlayImage)
+        let editedBaseImage = hasImageAdjustmentChanges ? renderedAdjustedImageForSave() : nil
+        onSaveEditedImage?(editedBaseImage)
+        onSave?(outputDrawing, outputData, overlayImage)
     }
     
-    func undo() { canvasView.undoManager?.undo() }
-    func redo() { canvasView.undoManager?.redo() }
+    func undo() {
+        if undoImageAdjustmentIfNeeded() { return }
+        canvasView.undoManager?.undo()
+    }
+
+    func redo() {
+        if redoImageAdjustmentIfNeeded() { return }
+        canvasView.undoManager?.redo()
+    }
     
 
 
@@ -1364,6 +2368,8 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         let hit = overlayView.subviews.reversed().compactMap { $0 as? BaseAnnotationView }.first { v in
             if let av = v as? ArrowAnnotationView {
                 return av.containsPoint(overlayView.convert(p, to: av))
+            } else if let sv = v as? ShapeAnnotationView {
+                return sv.containsPoint(overlayView.convert(p, to: sv))
             }
             return v.frame.contains(p)
         }
@@ -1515,7 +2521,14 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
             } else if currentTool == .rect || currentTool == .circle {
                 dragMode = .create
                 selectedAnnotation = nil
-                let shape = ShapeAnnotationView(frame: CGRect(origin: p, size: .zero), shapeType: currentTool, color: currentColor, lineWidth: 1.5)
+                let shape = ShapeAnnotationView(
+                    frame: CGRect(origin: p, size: .zero),
+                    shapeType: currentTool,
+                    color: currentColor,
+                    lineWidth: 1.5,
+                    isFilled: currentShapeFillOpacity > 0.0,
+                    fillOpacity: currentShapeFillOpacity
+                )
                 addAnnotation(shape)
                 activeShape = shape
                 dragStartPoint = p // Origin
@@ -1895,7 +2908,14 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
             let frame = CGRect(x: x, y: y, width: w, height: h)
             let type: MarkupTool = (s.type == "circle") ? .circle : .rect
             
-            let v = ShapeAnnotationView(frame: frame, shapeType: type, color: s.uicolor, lineWidth: s.lineWidth)
+            let v = ShapeAnnotationView(
+                frame: frame,
+                shapeType: type,
+                color: s.uicolor,
+                lineWidth: s.lineWidth,
+                isFilled: s.isFilled ?? false,
+                fillOpacity: s.fillOpacity ?? 1.0
+            )
             
             v.onDelete = { [weak self] in
                 self?.deleteAnnotation(v)
@@ -2015,6 +3035,15 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         // 選択されたスタンプ注釈があれば更新
         if let stampView = selectedAnnotation as? StampAnnotationView {
             stampView.scale = scale
+            saveState()
+        }
+    }
+
+    func didSelectShapeFillOpacity(_ opacity: CGFloat) {
+        currentShapeFillOpacity = max(0.0, min(1.0, opacity))
+        if let shape = selectedAnnotation as? ShapeAnnotationView {
+            shape.isFilled = currentShapeFillOpacity > 0.0
+            shape.fillOpacity = currentShapeFillOpacity
             saveState()
         }
     }
@@ -2203,9 +3232,11 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         } else if let sv = selection as? ShapeAnnotationView {
             currentTool = sv.shapeType
             currentColor = sv.color
+            currentShapeFillOpacity = sv.isFilled ? max(0.0, min(1.0, sv.fillOpacity)) : 0.0
             
             toolbar.selectTool(sv.shapeType, notifyDelegate: false)
             toolbar.selectColor(currentColor, notifyDelegate: false)
+            toolbar.selectShapeFillOpacity(currentShapeFillOpacity, notifyDelegate: false)
         } else if let numberStamp = selection as? NumberStampAnnotationView {
             currentTool = .numberStamp
             currentColor = numberStamp.stampColor
