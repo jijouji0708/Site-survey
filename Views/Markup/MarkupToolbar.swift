@@ -19,8 +19,8 @@ protocol MarkupToolbarDelegate: AnyObject {
 
 class MarkupToolbar: UIView {
     weak var delegate: MarkupToolbarDelegate?
-    private var selectedTool: MarkupTool = .arrow
-    private var selectedColor: UIColor = MarkupColors.red
+    private var selectedTool: MarkupTool = .pen
+    private var selectedColor: UIColor = MarkupColors.green
     
     private var toolButtons: [MarkupTool: UIButton] = [:]
     private var colorButtons: [UIButton] = []

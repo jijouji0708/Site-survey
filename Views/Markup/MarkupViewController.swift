@@ -1134,8 +1134,8 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
     
     // Logic
     private let toolPicker = PKToolPicker()
-    private var currentTool: MarkupTool = .arrow
-    private var currentColor: UIColor = .red
+    private var currentTool: MarkupTool = .pen
+    private var currentColor: UIColor = MarkupColors.green
     private var currentFontSize: CGFloat = 16 // Default Small
     private var currentArrowStyle: ArrowStyle = .oneWay
     private var currentMarkerWidth: CGFloat = 10 // Default Thin
@@ -1285,7 +1285,7 @@ class MarkupViewController: UIViewController, UIScrollViewDelegate, PKToolPicker
         toolPicker.addObserver(self)
         toolPicker.setVisible(true, forFirstResponder: canvasView)
         
-        setTool(.arrow) // Default to arrow tool
+        setTool(currentTool) // Default to currentTool
     }
     
     func setupOverlayInteraction() {

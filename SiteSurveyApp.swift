@@ -13,25 +13,27 @@ struct SiteSurveyApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
             Case.self,
-            CasePhoto.self
+            CasePhoto.self,
+            Tag.self,
+            AppSettings.self
         ])
-        
+
         let modelConfiguration = ModelConfiguration(
             schema: schema,
             isStoredInMemoryOnly: false,
             allowsSave: true
         )
-        
+
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])
         } catch {
             // マイグレーションエラーの場合、データストアを削除して再試行
             print("ModelContainer初期化エラー: \(error)")
-            
+
             // データストアを削除
             let url = URL.applicationSupportDirectory.appending(path: "default.store")
             try? FileManager.default.removeItem(at: url)
-            
+
             // 再試行
             do {
                 return try ModelContainer(for: schema, configurations: [modelConfiguration])
@@ -40,7 +42,7 @@ struct SiteSurveyApp: App {
             }
         }
     }()
-    
+
     var body: some Scene {
         WindowGroup {
             CaseListView()

@@ -15,7 +15,6 @@ final class Case {
     var overallNote: String = ""
     var address: String = ""
     var area: String = "" // エリア（自由入力）
-    var folderName: String = ""
     var showCoverPage: Bool = true // 表紙（メモ・詳細）を表示するかどうか
     var listOrder: Double = Date().timeIntervalSince1970
     var isArchived: Bool = false
@@ -40,6 +39,9 @@ final class Case {
     
     @Relationship(deleteRule: .cascade)
     var attachments: [CaseAttachment] = []
+
+    @Relationship
+    var tags: [Tag] = []
     
     // キャッシュ付きソート済み写真
     @Transient private var _sortedPhotos: [CasePhoto]?

@@ -38,7 +38,10 @@ struct CaseDetailView: View {
     @State private var photoToDelete: CasePhoto?
     @State private var showDeleteAlert = false
     @State private var isDetailsExpanded = false // 詳細セクションの開閉状態
-    
+
+    // タグ
+    @State private var showTagSheet = false
+
     @State private var draggingPhoto: CasePhoto? // ドラッグ中の写真を追跡
     @State private var dropTargetPhotoId: UUID? // ドロップターゲットのハイライト用
     @State private var photoViewMode: PhotoViewMode = .list // 写真表示モード（リストがデフォルト）
@@ -90,7 +93,10 @@ struct CaseDetailView: View {
             VStack(alignment: .leading, spacing: 16) {
                 // 全体メモ（トグル付き）
                 overallNoteSection
-                
+
+                // タグセクション
+                tagSection
+
                 // 詳細（曜日・時間）- 表紙表示時のみ
                 if caseItem.showCoverPage {
                     detailsSection
@@ -267,9 +273,68 @@ struct CaseDetailView: View {
         }
     }
     
+    // MARK: - タグセクション
+
+    @Query(sort: \Tag.createdAt, order: .forward) private var allTagsForDetail: [Tag]
+
+    private var tagSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("タグ")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    showTagSheet = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "tag")
+                        Text("編集")
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(accentGreen)
+                }
+            }
+
+            if caseItem.tags.isEmpty {
+                Text("タグなし")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 4)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(caseItem.tags) { tag in
+                            Text(tag.name)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(tag.color)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(tag.color.opacity(0.15))
+                                .clipShape(Capsule())
+                                .overlay(Capsule().stroke(tag.color.opacity(0.35), lineWidth: 1))
+                        }
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showTagSheet) {
+            TagPickerSheet(
+                caseItem: caseItem,
+                allTags: allTagsForDetail,
+                onCreateTag: { name in
+                    let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !n.isEmpty else { return }
+                    let tag = Tag(name: n)
+                    modelContext.insert(tag)
+                    try? modelContext.save()
+                }
+            )
+        }
+    }
+
     // MARK: - 全体メモセクション
     // 仕様: TextField、2〜5行、systemGray6背景、角丸8
-    
+
     private var overallNoteSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             // メモヘッダー（トグル付き）

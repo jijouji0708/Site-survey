@@ -2,83 +2,145 @@
 //  CaseListView.swift
 //  SiteSurvey
 //
-//  案件一覧画面
+//  案件一覧画面（タグ管理対応版）
 //
 
 import SwiftUI
 import SwiftData
 import UIKit
 
-private enum CaseScopeKind: Equatable {
+// MARK: - スコープ定義
+
+fileprivate enum CaseScopeKind: Equatable {
     case all
+    case untagged
     case archived
-    case folder(String)
+    case tag(Tag)
+
+    static func == (lhs: CaseScopeKind, rhs: CaseScopeKind) -> Bool {
+        switch (lhs, rhs) {
+        case (.all, .all), (.untagged, .untagged), (.archived, .archived): return true
+        case (.tag(let a), .tag(let b)): return a.id == b.id
+        default: return false
+        }
+    }
 }
 
-private struct CaseScopeItem: Identifiable, Equatable {
+fileprivate struct CaseScopeItem: Identifiable, Equatable {
     let kind: CaseScopeKind
     let id: String
     let title: String
 
-    static let all = CaseScopeItem(kind: .all, id: "scope_all", title: "全ファイル")
+    static let all      = CaseScopeItem(kind: .all,      id: "scope_all",      title: "全ファイル")
+    static let untagged = CaseScopeItem(kind: .untagged, id: "scope_untagged", title: "未分類")
     static let archived = CaseScopeItem(kind: .archived, id: "scope_archived", title: "アーカイブ")
 
-    static func folder(_ name: String) -> CaseScopeItem {
-        CaseScopeItem(kind: .folder(name), id: "scope_folder_\(name)", title: name)
+    static func tag(_ tag: Tag) -> CaseScopeItem {
+        CaseScopeItem(kind: .tag(tag), id: "scope_tag_\(tag.id.uuidString)", title: tag.name)
     }
 }
+
+// MARK: - 最大タグ数
+private let maxTagsPerCase = 3
+
+// MARK: - タグカラーパレット
+private let tagColorPalette: [String] = [
+    "#4A90E2", // Blue
+    "#7B68EE", // Medium Slate Blue
+    "#FF6B6B", // Coral Red
+    "#F5A623", // Orange
+    "#27AE60", // Emerald Green
+    "#1ABC9C", // Turquoise
+    "#E91E63", // Pink
+    "#9B59B6", // Amethyst
+    "#F39C12", // Sunflower
+    "#2C3E50", // Dark Blue Gray
+]
+
+// MARK: - CaseListView
 
 struct CaseListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(filter: #Predicate<Case> { $0.isArchived == false }, sort: \Case.listOrder, order: .reverse) private var cases: [Case]
     @Query(filter: #Predicate<Case> { $0.isArchived }, sort: \Case.listOrder, order: .reverse) private var archivedCases: [Case]
+    @Query(sort: \Tag.sortOrder, order: .forward) private var allTags: [Tag]
+    @Query private var settingsQuery: [AppSettings]
 
     @State private var path = NavigationPath()
 
     @State private var isSelectionMode = false
     @State private var selection = Set<Case.ID>()
 
+    // 削除アラート
     @State private var caseToDelete: Case?
     @State private var showDeleteAlert = false
     @State private var showBulkDeleteAlert = false
-    @State private var showBulkFolderMoveAlert = false
-    @State private var showBulkFolderActionDialog = false
-    @State private var showBulkFolderPickerDialog = false
-    @State private var bulkFolderNameInput: String = ""
+
+    // 案件名変更
     @State private var caseToRename: Case?
     @State private var renameTitle: String = ""
     @State private var showRenameAlert = false
-    @State private var caseToEditFolder: Case?
-    @State private var folderNameInput: String = ""
-    @State private var showFolderEditAlert = false
-    @State private var showSingleFolderPickerDialog = false
-    @State private var folderToManageName: String = ""
-    @State private var folderRenameInput: String = ""
-    @State private var showFolderRenameAlert = false
-    @State private var showFolderDeleteAlert = false
+
+    // PDF
     @State private var showPDFPreview = false
     @State private var pdfPreviewURL: URL?
     @State private var previewGeneratingCaseID: UUID?
+
+    // 検索
     @State private var searchText: String = ""
+
+    // スコープ
     @State private var selectedScopeID: String = CaseScopeItem.all.id
-    @State private var isFolderDrawerOpen = false
+
+    // サイドバー
+    @State private var isTagDrawerOpen = false
+
+    // タグ管理シート
+    @State private var showTagManagerSheet = false
+
+    // 案件へのタグ付けシート
+    @State private var caseToTag: Case?
+    @State private var showTagPickerSheet = false
+
+    // 一括タグ付けシート
+    @State private var showBulkTagSheet = false
+
+    // デフォルトスコープ設定シート
+    @State private var showDefaultScopeSheet = false
+
+    // タグリネームシート
+    @State private var tagToRename: Tag?
+    @State private var tagRenameInput: String = ""
+    @State private var showTagRenameAlert = false
+
+    // タグ削除確認
+    @State private var tagToDelete: Tag?
+    @State private var showTagDeleteAlert = false
+
+    // タグ新規作成
+    @State private var newTagNameInput: String = ""
+    @State private var newTagColorHex: String = tagColorPalette[0]
+    @State private var showNewTagAlert = false
 
     private let accentGreen = Color(red: 0.2, green: 0.78, blue: 0.35)
     private let neonBlue = Color(red: 0.18, green: 0.62, blue: 1.0)
+
+    // MARK: - Computed
+
+    private var appSettings: AppSettings {
+        if let s = settingsQuery.first { return s }
+        let s = AppSettings()
+        modelContext.insert(s)
+        try? modelContext.save()
+        return s
+    }
 
     private var trimmedSearchText: String {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var folderNames: [String] {
-        let allNames = (cases + archivedCases)
-            .map { $0.folderName.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        return Array(Set(allNames)).sorted()
-    }
-
     private var scopeItems: [CaseScopeItem] {
-        [CaseScopeItem.all, CaseScopeItem.archived] + folderNames.map { CaseScopeItem.folder($0) }
+        [.all, .untagged] + allTags.map { CaseScopeItem.tag($0) } + [.archived]
     }
 
     private var scopeItemsKey: String {
@@ -89,9 +151,7 @@ struct CaseListView: View {
         scopeItems.first(where: { $0.id == selectedScopeID }) ?? CaseScopeItem.all
     }
 
-    private var navigationTitleText: String {
-        selectedScopeItem.title
-    }
+    private var navigationTitleText: String { selectedScopeItem.title }
 
     private var isArchivedScope: Bool {
         if case .archived = selectedScopeItem.kind { return true }
@@ -103,22 +163,19 @@ struct CaseListView: View {
         return false
     }
 
-    private var selectedFolderName: String? {
-        if case .folder(let name) = selectedScopeItem.kind {
-            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        }
+    private var selectedTag: Tag? {
+        if case .tag(let t) = selectedScopeItem.kind { return t }
         return nil
     }
 
     private var scopedCases: [Case] {
         switch selectedScopeItem.kind {
-        case .all:
-            return cases
-        case .archived:
-            return archivedCases
-        case .folder(let name):
-            return cases.filter { $0.folderName.trimmingCharacters(in: .whitespacesAndNewlines) == name }
+        case .all:      return cases
+        case .untagged: return cases.filter { $0.tags.isEmpty }
+        case .archived: return archivedCases
+        case .tag(let t):
+            let tid = t.id
+            return cases.filter { $0.tags.contains(where: { $0.id == tid }) }
         }
     }
 
@@ -136,13 +193,15 @@ struct CaseListView: View {
     }
 
     private var drawerWidth: CGFloat {
-        min(320, UIScreen.main.bounds.width * 0.78)
+        min(300, UIScreen.main.bounds.width * 0.76)
     }
 
     private var canReorderCurrentScope: Bool {
         guard isSelectionMode, trimmedSearchText.isEmpty else { return false }
         return isAllScope || isArchivedScope
     }
+
+    // MARK: - Body
 
     var body: some View {
         navigationContainer
@@ -158,258 +217,146 @@ struct CaseListView: View {
             .onAppear {
                 normalizeCaseListOrderIfNeeded()
                 ensureSelectedScopeIsValid()
+                applyDefaultScope()
             }
-            .onChange(of: scopeItemsKey) { _, _ in
-                ensureSelectedScopeIsValid()
-            }
+            .onChange(of: scopeItemsKey) { _, _ in ensureSelectedScopeIsValid() }
             .onChange(of: selectedScopeID) { _, _ in
-                if isSelectionMode {
-                    selection.removeAll()
-                }
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isFolderDrawerOpen = false
-                }
+                if isSelectionMode { selection.removeAll() }
+                withAnimation(.easeInOut(duration: 0.2)) { isTagDrawerOpen = false }
             }
             .onChange(of: path.isEmpty) { _, isEmpty in
-                if !isEmpty && isFolderDrawerOpen {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        isFolderDrawerOpen = false
-                    }
+                if !isEmpty && isTagDrawerOpen {
+                    withAnimation(.easeInOut(duration: 0.2)) { isTagDrawerOpen = false }
                 }
             }
             .tint(accentGreen)
+            // アラート・シート
+            .alert("案件を削除", isPresented: $showDeleteAlert) {
+                Button("キャンセル", role: .cancel) {}
+                Button("削除", role: .destructive) {
+                    if let c = caseToDelete { deleteCase(c) }
+                }
+            } message: { Text("この案件を削除してもよろしいですか？") }
+            .alert("案件を一括削除", isPresented: $showBulkDeleteAlert) {
+                Button("キャンセル", role: .cancel) {}
+                Button("削除", role: .destructive) { deleteSelectedCases() }
+            } message: { Text("選択した\(selection.count)件の案件を削除してもよろしいですか？\n含まれる写真もすべて削除されます。") }
+            .alert("案件名を変更", isPresented: $showRenameAlert) {
+                TextField("案件名", text: $renameTitle)
+                Button("キャンセル", role: .cancel) {}
+                Button("保存") { renameCase() }
+            }
+            .alert("タグ名を変更", isPresented: $showTagRenameAlert) {
+                TextField("タグ名", text: $tagRenameInput)
+                Button("キャンセル", role: .cancel) {}
+                Button("保存") { saveTagRename() }
+            }
+            .alert("タグを削除", isPresented: $showTagDeleteAlert) {
+                Button("キャンセル", role: .cancel) {}
+                Button("削除", role: .destructive) {
+                    if let t = tagToDelete { deleteTag(t) }
+                }
+            } message: {
+                Text("タグ「\(tagToDelete?.name ?? "")」を削除します。\n付与された案件からは外されます。")
+            }
+            .alert("タグを作成", isPresented: $showNewTagAlert) {
+                TextField("タグ名", text: $newTagNameInput)
+                Button("キャンセル", role: .cancel) {}
+                Button("作成") { createNewTag() }
+            }
+            .sheet(isPresented: $showPDFPreview) {
+                if let url = pdfPreviewURL { PDFPreviewView(url: url) }
+            }
+            .sheet(isPresented: $showTagPickerSheet) {
+                if let c = caseToTag {
+                    TagPickerSheet(caseItem: c, allTags: allTags, onCreateTag: { createNewTagFrom(name: $0) })
+                }
+            }
+            .sheet(isPresented: $showBulkTagSheet) {
+                BulkTagSheet(cases: selectedCaseItems, allTags: allTags, onCreateTag: { createNewTagFrom(name: $0) }, onDone: {
+                    showBulkTagSheet = false
+                    selection.removeAll()
+                    isSelectionMode = false
+                })
+            }
+            .sheet(isPresented: $showTagManagerSheet) {
+                TagManagerSheet(
+                    allTags: allTags,
+                    onRename: { tag in
+                        tagToRename = tag
+                        tagRenameInput = tag.name
+                        showTagRenameAlert = true
+                    },
+                    onDelete: { tag in
+                        tagToDelete = tag
+                        showTagDeleteAlert = true
+                    },
+                    onCreate: {
+                        newTagNameInput = ""
+                        newTagColorHex = nextTagColor()
+                        showNewTagAlert = true
+                    }
+                )
+            }
+            .sheet(isPresented: $showDefaultScopeSheet) {
+                DefaultScopeSheet(
+                    scopeItems: scopeItems,
+                    currentDefault: appSettings.defaultScopeRaw,
+                    onSelect: { raw in
+                        appSettings.defaultScopeRaw = raw
+                        try? modelContext.save()
+                        showDefaultScopeSheet = false
+                    }
+                )
+            }
+            .searchable(
+                text: $searchText,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "案件タイトルで検索"
+            )
     }
+
+    // MARK: - Navigation Container
 
     private var navigationContainer: some View {
         NavigationStack(path: $path) {
-            mainScene
+            sceneStack
+                .navigationTitle(navigationTitleText)
+                .toolbar { listToolbarContent }
+                .navigationDestination(for: Case.self) { CaseDetailView(caseItem: $0) }
         }
     }
 
-    private var mainScene: some View {
-        let base = AnyView(sceneStack)
-        let withChrome = applyMainSceneChrome(to: base)
-        let withAlerts = applyCaseAlerts(to: withChrome)
-        let withDialogs = applyFolderDialogs(to: withAlerts)
-        return applyScenePresentations(to: withDialogs)
-    }
-
-    private func applyMainSceneChrome(to content: AnyView) -> AnyView {
-        AnyView(
-            content
-                .animation(.easeInOut(duration: 0.22), value: selectedScopeID)
-                .animation(.easeInOut(duration: 0.2), value: isFolderDrawerOpen)
-                .navigationTitle(navigationTitleText)
-                .toolbar { listToolbarContent }
-        )
-    }
-
-    private func applyCaseAlerts(to content: AnyView) -> AnyView {
-        let alertDelete = AnyView(
-            content
-                .alert("案件を削除", isPresented: $showDeleteAlert) {
-                    Button("キャンセル", role: .cancel) {}
-                    Button("削除", role: .destructive) {
-                        if let caseItem = caseToDelete {
-                            deleteCase(caseItem)
-                        }
-                    }
-                } message: {
-                    Text("この案件を削除してもよろしいですか？")
-                }
-        )
-
-        let alertBulkDelete = AnyView(
-            alertDelete
-                .alert("案件を一括削除", isPresented: $showBulkDeleteAlert) {
-                    Button("キャンセル", role: .cancel) {}
-                    Button("削除", role: .destructive) {
-                        deleteSelectedCases()
-                    }
-                } message: {
-                    Text("選択した\(selection.count)件の案件を削除してもよろしいですか？\n含まれる写真もすべて削除されます。")
-                }
-        )
-
-        let alertBulkMove = AnyView(
-            alertBulkDelete
-                .alert("フォルダへ一括移動", isPresented: $showBulkFolderMoveAlert) {
-                    TextField("フォルダ名（空で未分類）", text: $bulkFolderNameInput)
-                    Button("未分類にする") {
-                        bulkFolderNameInput = ""
-                        moveSelectedCasesToFolder()
-                    }
-                    Button("キャンセル", role: .cancel) {}
-                    Button("移動") {
-                        moveSelectedCasesToFolder()
-                    }
-                } message: {
-                    Text("選択した\(selection.count)件を指定フォルダへ移動します。")
-                }
-        )
-
-        let alertRenameCase = AnyView(
-            alertBulkMove
-                .alert("案件名を変更", isPresented: $showRenameAlert) {
-                    TextField("案件名", text: $renameTitle)
-                    Button("キャンセル", role: .cancel) {}
-                    Button("保存") {
-                        renameCase()
-                    }
-                }
-        )
-
-        let alertEditFolder = AnyView(
-            alertRenameCase
-                .alert("フォルダ設定", isPresented: $showFolderEditAlert) {
-                    TextField("フォルダ名（空で未分類）", text: $folderNameInput)
-                    if !folderNames.isEmpty {
-                        Button("既存フォルダから選択") {
-                            showSingleFolderPickerDialog = true
-                        }
-                    }
-                    Button("未分類にする") {
-                        folderNameInput = ""
-                        saveFolderName()
-                    }
-                    Button("キャンセル", role: .cancel) {}
-                    Button("保存") {
-                        saveFolderName()
-                    }
-                }
-        )
-
-        let alertRenameFolder = AnyView(
-            alertEditFolder
-                .alert("フォルダ名を変更", isPresented: $showFolderRenameAlert) {
-                    TextField("フォルダ名", text: $folderRenameInput)
-                    Button("キャンセル", role: .cancel) {}
-                    Button("保存") {
-                        renameSelectedFolder()
-                    }
-                } message: {
-                    Text("選択中フォルダの案件をすべて移動します。")
-                }
-        )
-
-        let alertDeleteFolder = AnyView(
-            alertRenameFolder
-                .alert("フォルダを削除", isPresented: $showFolderDeleteAlert) {
-                    Button("キャンセル", role: .cancel) {}
-                    Button("削除", role: .destructive) {
-                        deleteSelectedFolder()
-                    }
-                } message: {
-                    Text("フォルダ「\(folderToManageName)」を削除し、案件を未分類に移動します。")
-                }
-        )
-
-        return alertDeleteFolder
-    }
-
-    private func applyFolderDialogs(to content: AnyView) -> AnyView {
-        let bulkActionDialog = AnyView(
-            content
-                .confirmationDialog("移動先を選択", isPresented: $showBulkFolderActionDialog, titleVisibility: .visible) {
-                    if !folderNames.isEmpty {
-                        Button("既存フォルダから選択") {
-                            showBulkFolderPickerDialog = true
-                        }
-                    }
-                    Button("新規フォルダを入力") {
-                        bulkFolderNameInput = ""
-                        showBulkFolderMoveAlert = true
-                    }
-                    Button("未分類にする") {
-                        bulkFolderNameInput = ""
-                        moveSelectedCasesToFolder()
-                    }
-                    Button("キャンセル", role: .cancel) {}
-                }
-        )
-
-        let bulkPickerDialog = AnyView(
-            bulkActionDialog
-                .confirmationDialog("既存フォルダを選択", isPresented: $showBulkFolderPickerDialog, titleVisibility: .visible) {
-                    ForEach(folderNames, id: \.self) { folder in
-                        Button(folder) {
-                            bulkFolderNameInput = folder
-                            moveSelectedCasesToFolder()
-                        }
-                    }
-                    Button("キャンセル", role: .cancel) {}
-                }
-        )
-
-        let singlePickerDialog = AnyView(
-            bulkPickerDialog
-                .confirmationDialog("フォルダを選択", isPresented: $showSingleFolderPickerDialog, titleVisibility: .visible) {
-                    ForEach(folderNames, id: \.self) { folder in
-                        Button(folder) {
-                            folderNameInput = folder
-                            saveFolderName()
-                        }
-                    }
-                    Button("キャンセル", role: .cancel) {}
-                }
-        )
-
-        return singlePickerDialog
-    }
-
-    private func applyScenePresentations(to content: AnyView) -> AnyView {
-        let withSheet = AnyView(
-            content
-                .sheet(isPresented: $showPDFPreview) {
-                    if let url = pdfPreviewURL {
-                        PDFPreviewView(url: url)
-                    }
-                }
-        )
-
-        let withSearch = AnyView(
-            withSheet
-                .searchable(
-                    text: $searchText,
-                    placement: .navigationBarDrawer(displayMode: .always),
-                    prompt: "案件タイトルで検索"
-                )
-        )
-
-        let withDestination = AnyView(
-            withSearch
-                .navigationDestination(for: Case.self) { caseItem in
-                    CaseDetailView(caseItem: caseItem)
-                }
-        )
-
-        return withDestination
-    }
+    // MARK: - Scene Stack
 
     private var sceneStack: some View {
         ZStack(alignment: .leading) {
             listContent
-                .allowsHitTesting(!(path.isEmpty && isFolderDrawerOpen))
+                .allowsHitTesting(!(path.isEmpty && isTagDrawerOpen))
                 .zIndex(0)
 
             drawerDimmer
 
-            if path.isEmpty && isFolderDrawerOpen {
-                folderDrawerPanel
+            if path.isEmpty && isTagDrawerOpen {
+                tagDrawerPanel
                     .transition(.move(edge: .leading).combined(with: .opacity))
                     .zIndex(2)
             }
         }
+        .animation(.easeInOut(duration: 0.22), value: selectedScopeID)
+        .animation(.easeInOut(duration: 0.2), value: isTagDrawerOpen)
     }
+
+    // MARK: - Drawer Dimmer
 
     @ViewBuilder
     private var drawerDimmer: some View {
-        if path.isEmpty && isFolderDrawerOpen {
+        if path.isEmpty && isTagDrawerOpen {
             Color.black.opacity(0.45)
                 .ignoresSafeArea()
                 .onTapGesture {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.88)) {
-                        isFolderDrawerOpen = false
+                        isTagDrawerOpen = false
                     }
                 }
                 .transition(.opacity)
@@ -417,59 +364,54 @@ struct CaseListView: View {
         }
     }
 
+    // MARK: - Toolbar
+
     @ToolbarContentBuilder
     private var listToolbarContent: some ToolbarContent {
+        // ← サイドバートグル
         ToolbarItem(placement: .topBarLeading) {
             if path.isEmpty {
                 Button {
                     withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                        isFolderDrawerOpen.toggle()
+                        isTagDrawerOpen.toggle()
                     }
                 } label: {
-                    Image(systemName: isFolderDrawerOpen ? "sidebar.left" : "sidebar.right")
+                    Image(systemName: isTagDrawerOpen ? "sidebar.left" : "sidebar.right")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(neonBlue)
                 }
-                .accessibilityLabel(isFolderDrawerOpen ? "フォルダナビを閉じる" : "フォルダナビを開く")
+                .accessibilityLabel(isTagDrawerOpen ? "タグナビを閉じる" : "タグナビを開く")
             }
         }
 
+        // 選択モード切替
         ToolbarItem(placement: .topBarLeading) {
             Button {
                 isSelectionMode.toggle()
-                if !isSelectionMode {
-                    selection.removeAll()
-                }
+                if !isSelectionMode { selection.removeAll() }
             } label: {
                 Text(isSelectionMode ? "キャンセル" : "選択")
             }
         }
 
+        // 右上メニュー
         ToolbarItem(placement: .navigationBarTrailing) {
             if !isSelectionMode {
                 HStack(spacing: 12) {
+                    // タグ管理
                     Menu {
-                        if let folder = selectedFolderName {
-                            Button {
-                                folderToManageName = folder
-                                folderRenameInput = folder
-                                showFolderRenameAlert = true
-                            } label: {
-                                Label("フォルダ名を変更", systemImage: "pencil")
-                            }
-
-                            Button(role: .destructive) {
-                                folderToManageName = folder
-                                showFolderDeleteAlert = true
-                            } label: {
-                                Label("フォルダを削除", systemImage: "trash")
-                            }
-                        } else {
-                            Button("フォルダを選択すると管理できます") {}
-                                .disabled(true)
+                        Button {
+                            showTagManagerSheet = true
+                        } label: {
+                            Label("タグを管理", systemImage: "tag.fill")
+                        }
+                        Button {
+                            showDefaultScopeSheet = true
+                        } label: {
+                            Label("起動時の表示を設定", systemImage: "house.fill")
                         }
                     } label: {
-                        Image(systemName: "folder.badge.gearshape")
+                        Image(systemName: "tag.circle")
                             .foregroundColor(accentGreen)
                             .font(.title3)
                     }
@@ -484,6 +426,8 @@ struct CaseListView: View {
         }
     }
 
+    // MARK: - List Content
+
     @ViewBuilder
     private var listContent: some View {
         if scopedCases.isEmpty && trimmedSearchText.isEmpty {
@@ -497,12 +441,16 @@ struct CaseListView: View {
 
     private var emptyStateView: some View {
         VStack(spacing: 16) {
-            Image(systemName: "folder")
+            Image(systemName: isArchivedScope ? "archivebox" : "tag")
                 .font(.system(size: 60))
                 .foregroundColor(accentGreen.opacity(0.5))
 
             if isArchivedScope {
                 Text("アーカイブは空です")
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+            } else if case .untagged = selectedScopeItem.kind {
+                Text("未分類の案件はありません")
                     .font(.headline)
                     .foregroundColor(.secondary)
             } else {
@@ -541,13 +489,10 @@ struct CaseListView: View {
 
                     if !isSelectionMode {
                         HStack(spacing: 10) {
-                            Button(action: {
-                                generatePDFPreview(for: caseItem)
-                            }) {
+                            Button(action: { generatePDFPreview(for: caseItem) }) {
                                 Group {
                                     if previewGeneratingCaseID == caseItem.id {
-                                        ProgressView()
-                                            .scaleEffect(0.75)
+                                        ProgressView().scaleEffect(0.75)
                                     } else {
                                         Image(systemName: "eye")
                                     }
@@ -558,9 +503,7 @@ struct CaseListView: View {
                             .foregroundColor(accentGreen)
                             .disabled(previewGeneratingCaseID != nil || !hasIncludedPDFPhotos(caseItem))
 
-                            Button(action: {
-                                startRename(caseItem)
-                            }) {
+                            Button(action: { startRename(caseItem) }) {
                                 Image(systemName: "pencil")
                                     .frame(width: 24, height: 24)
                             }
@@ -580,43 +523,27 @@ struct CaseListView: View {
                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                     if !isSelectionMode {
                         Button(role: .destructive) {
-                            caseToDelete = caseItem
-                            showDeleteAlert = true
-                        } label: {
-                            Label("削除", systemImage: "trash")
-                        }
+                            caseToDelete = caseItem; showDeleteAlert = true
+                        } label: { Label("削除", systemImage: "trash") }
                         .tint(.red)
 
-                        Button {
-                            startRename(caseItem)
-                        } label: {
-                            Label("名称変更", systemImage: "pencil")
-                        }
+                        Button { startRename(caseItem) } label: { Label("名称変更", systemImage: "pencil") }
                         .tint(accentGreen)
 
                         Button {
-                            startFolderEdit(caseItem)
-                        } label: {
-                            Label("フォルダ", systemImage: "folder")
-                        }
+                            caseToTag = caseItem
+                            showTagPickerSheet = true
+                        } label: { Label("タグ", systemImage: "tag") }
                         .tint(.orange)
                     }
                 }
                 .swipeActions(edge: .leading, allowsFullSwipe: true) {
                     if !isSelectionMode {
                         if isArchivedScope {
-                            Button {
-                                restoreCase(caseItem)
-                            } label: {
-                                Label("復元", systemImage: "arrow.uturn.backward.circle")
-                            }
+                            Button { restoreCase(caseItem) } label: { Label("復元", systemImage: "arrow.uturn.backward.circle") }
                             .tint(accentGreen)
                         } else {
-                            Button {
-                                archiveCase(caseItem)
-                            } label: {
-                                Label("アーカイブ", systemImage: "archivebox")
-                            }
+                            Button { archiveCase(caseItem) } label: { Label("アーカイブ", systemImage: "archivebox") }
                             .tint(.blue)
                         }
                     }
@@ -628,44 +555,74 @@ struct CaseListView: View {
         .listStyle(.plain)
     }
 
-    private var folderDrawerPanel: some View {
+    // MARK: - Tag Drawer
+
+    private var tagDrawerPanel: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
-                Image(systemName: "folder.fill")
+                Image(systemName: "tag.fill")
                     .foregroundColor(neonBlue)
-                Text("フォルダナビ")
+                Text("タグ")
                     .font(.headline.weight(.semibold))
                     .foregroundColor(.white)
                 Spacer()
+                // タグ管理ボタン
+                Button {
+                    withAnimation { isTagDrawerOpen = false }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        showTagManagerSheet = true
+                    }
+                } label: {
+                    Image(systemName: "gearshape")
+                        .foregroundColor(.white.opacity(0.7))
+                        .font(.system(size: 15))
+                }
+                .buttonStyle(.plain)
             }
             .padding(.bottom, 2)
 
             ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 14) {
-                    drawerScopeRow(item: .all, count: cases.count)
+                VStack(alignment: .leading, spacing: 8) {
+                    // 固定スコープ
+                    drawerScopeRow(item: .all,      count: cases.count)
+                    drawerScopeRow(item: .untagged, count: cases.filter { $0.tags.isEmpty }.count)
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("フォルダ")
+                    if !allTags.isEmpty {
+                        Divider().background(Color.white.opacity(0.15)).padding(.vertical, 4)
+
+                        Text("タグ")
                             .font(.caption.weight(.semibold))
                             .foregroundColor(.white.opacity(0.65))
                             .padding(.horizontal, 4)
 
-                        if folderNames.isEmpty {
-                            Text("フォルダ未作成")
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.45))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 6)
-                        } else {
-                            ForEach(folderNames, id: \.self) { name in
-                                drawerScopeRow(item: .folder(name), count: cases.filter {
-                                    $0.folderName.trimmingCharacters(in: .whitespacesAndNewlines) == name
-                                }.count)
-                            }
+                        ForEach(allTags) { tag in
+                            let count = cases.filter { c in c.tags.contains(where: { $0.id == tag.id }) }.count
+                            drawerScopeRow(item: .tag(tag), count: count)
                         }
                     }
 
+                    Divider().background(Color.white.opacity(0.15)).padding(.vertical, 4)
                     drawerScopeRow(item: .archived, count: archivedCases.count)
+
+                    // タグ追加
+                    Button {
+                        newTagNameInput = ""
+                        newTagColorHex = nextTagColor()
+                        showNewTagAlert = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 13))
+                                .foregroundColor(accentGreen.opacity(0.9))
+                            Text("タグを追加")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(accentGreen.opacity(0.9))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 9)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
 
@@ -703,14 +660,21 @@ struct CaseListView: View {
 
     private func drawerScopeRow(item: CaseScopeItem, count: Int) -> some View {
         let isSelected = item.id == selectedScopeID
-        return Button {
-            selectScope(id: item.id)
-        } label: {
+        let accent = scopeAccentColor(for: item)
+        return Button { selectScope(id: item.id) } label: {
             HStack(spacing: 10) {
-                Image(systemName: scopeSymbol(for: item.kind))
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(isSelected ? .white : scopeAccentColor(for: item).opacity(0.92))
-                    .frame(width: 18)
+                // カラードットまたはアイコン
+                if case .tag(let t) = item.kind {
+                    Circle()
+                        .fill(t.color)
+                        .frame(width: 12, height: 12)
+                        .padding(.leading, 3)
+                } else {
+                    Image(systemName: scopeSymbol(for: item.kind))
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(isSelected ? .white : accent.opacity(0.92))
+                        .frame(width: 18)
+                }
 
                 Text(item.title)
                     .font(.subheadline.weight(.semibold))
@@ -727,21 +691,13 @@ struct CaseListView: View {
             .padding(.vertical, 9)
             .frame(maxWidth: .infinity)
             .background(
-                Group {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [scopeAccentColor(for: item).opacity(0.95), scopeAccentColor(for: item).opacity(0.68)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                    } else {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color.white.opacity(0.06))
-                    }
-                }
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isSelected
+                          ? LinearGradient(colors: [accent.opacity(0.95), accent.opacity(0.68)],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                          : LinearGradient(colors: [Color.white.opacity(0.06), Color.white.opacity(0.06)],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                    )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -751,40 +707,24 @@ struct CaseListView: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: - Bulk Action Bar
+
     private var bulkActionBar: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                bulkActionButton(
-                    title: "移動",
-                    systemImage: "folder.badge.plus",
-                    tint: neonBlue
-                ) {
-                    showBulkFolderActionDialog = true
+                bulkActionButton(title: "タグ設定", systemImage: "tag.fill", tint: neonBlue) {
+                    showBulkTagSheet = true
                 }
-
                 if isArchivedScope {
-                    bulkActionButton(
-                        title: "復元",
-                        systemImage: "arrow.uturn.backward.circle.fill",
-                        tint: accentGreen
-                    ) {
+                    bulkActionButton(title: "復元", systemImage: "arrow.uturn.backward.circle.fill", tint: accentGreen) {
                         restoreSelectedCases()
                     }
                 } else {
-                    bulkActionButton(
-                        title: "アーカイブ",
-                        systemImage: "archivebox.fill",
-                        tint: neonBlue
-                    ) {
+                    bulkActionButton(title: "アーカイブ", systemImage: "archivebox.fill", tint: neonBlue) {
                         archiveSelectedCases()
                     }
                 }
-
-                bulkActionButton(
-                    title: "削除",
-                    systemImage: "trash.fill",
-                    tint: .red
-                ) {
+                bulkActionButton(title: "削除", systemImage: "trash.fill", tint: .red) {
                     showBulkDeleteAlert = true
                 }
             }
@@ -794,11 +734,9 @@ struct CaseListView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundColor(.white.opacity(0.92))
                 Spacer()
-                Button("選択解除") {
-                    selection.removeAll()
-                }
-                .font(.caption.weight(.semibold))
-                .foregroundColor(neonBlue)
+                Button("選択解除") { selection.removeAll() }
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(neonBlue)
             }
         }
         .padding(12)
@@ -813,73 +751,105 @@ struct CaseListView: View {
         .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
     }
 
-    private func bulkActionButton(
-        title: String,
-        systemImage: String,
-        tint: Color,
-        action: @escaping () -> Void
-    ) -> some View {
+    private func bulkActionButton(title: String, systemImage: String, tint: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 5) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 15, weight: .bold))
-                Text(title)
-                    .font(.caption2.weight(.semibold))
-                    .lineLimit(1)
+                Image(systemName: systemImage).font(.system(size: 15, weight: .bold))
+                Text(title).font(.caption2.weight(.semibold)).lineLimit(1)
             }
             .foregroundColor(.white)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 9)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(tint.opacity(0.9))
-            )
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(tint.opacity(0.9)))
         }
         .buttonStyle(.plain)
     }
 
+    // MARK: - Helpers
+
     private func scopeSymbol(for kind: CaseScopeKind) -> String {
         switch kind {
-        case .all:
-            return "tray.full"
-        case .archived:
-            return "archivebox"
-        case .folder:
-            return "folder"
+        case .all:      return "tray.full"
+        case .untagged: return "tag.slash"
+        case .archived: return "archivebox"
+        case .tag:      return "tag"
         }
     }
 
     private func scopeAccentColor(for item: CaseScopeItem) -> Color {
         switch item.kind {
-        case .all:
-            return Color(red: 0.17, green: 0.76, blue: 0.56)
-        case .archived:
-            return Color(red: 0.40, green: 0.45, blue: 0.56)
-        case .folder(let name):
-            let palette: [Color] = [
-                Color(red: 0.20, green: 0.58, blue: 0.98),
-                Color(red: 0.62, green: 0.38, blue: 0.93),
-                Color(red: 0.98, green: 0.50, blue: 0.17),
-                Color(red: 0.95, green: 0.24, blue: 0.57),
-                Color(red: 0.15, green: 0.74, blue: 0.75)
-            ]
-            let hashValue = abs(name.unicodeScalars.reduce(0) { ($0 * 31) + Int($1.value) })
-            return palette[hashValue % palette.count]
+        case .all:      return Color(red: 0.17, green: 0.76, blue: 0.56)
+        case .untagged: return Color(red: 0.60, green: 0.60, blue: 0.64)
+        case .archived: return Color(red: 0.40, green: 0.45, blue: 0.56)
+        case .tag(let t): return t.color
         }
     }
 
+    private func nextTagColor() -> String {
+        let usedCount = allTags.count
+        return tagColorPalette[usedCount % tagColorPalette.count]
+    }
+
     private func toggleSelection(for caseItem: Case) {
-        if selection.contains(caseItem.id) {
-            selection.remove(caseItem.id)
-        } else {
-            selection.insert(caseItem.id)
+        if selection.contains(caseItem.id) { selection.remove(caseItem.id) }
+        else { selection.insert(caseItem.id) }
+    }
+
+    private func selectScope(id: String) {
+        guard id != selectedScopeID else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.spring(response: 0.26, dampingFraction: 0.9, blendDuration: 0.12)) {
+            selectedScopeID = id
+            isTagDrawerOpen = false
         }
     }
+
+    private func ensureSelectedScopeIsValid() {
+        guard !scopeItems.contains(where: { $0.id == selectedScopeID }) else { return }
+        selectedScopeID = CaseScopeItem.all.id
+    }
+
+    private func applyDefaultScope() {
+        let raw = appSettings.defaultScopeRaw
+        // raw が現在のスコープIDに存在するか確認
+        if raw == AppSettings.defaultScopeAll {
+            selectedScopeID = CaseScopeItem.all.id
+        } else if raw == AppSettings.defaultScopeUntagged {
+            selectedScopeID = CaseScopeItem.untagged.id
+        } else if raw == AppSettings.defaultScopeArchived {
+            selectedScopeID = CaseScopeItem.archived.id
+        } else if raw.hasPrefix("tag:") {
+            let uuidString = String(raw.dropFirst(4))
+            if let tag = allTags.first(where: { $0.id.uuidString == uuidString }) {
+                selectedScopeID = CaseScopeItem.tag(tag).id
+            }
+        }
+    }
+
+    private func hasIncludedPDFPhotos(_ caseItem: Case) -> Bool {
+        caseItem.sortedPhotos.contains { $0.isIncludedInPDF }
+    }
+
+    // MARK: - CRUD
 
     private func addCase() {
         let newCase = Case()
         newCase.listOrder = (cases.first?.listOrder ?? Date().timeIntervalSince1970) + 1
+        // 現在タグスコープを見ていれば、そのタグを付与する
+        if let t = selectedTag { newCase.tags.append(t) }
         modelContext.insert(newCase)
+        try? modelContext.save()
+    }
+
+    private func startRename(_ caseItem: Case) {
+        caseToRename = caseItem; renameTitle = caseItem.title; showRenameAlert = true
+    }
+
+    private func renameCase() {
+        guard let c = caseToRename else { return }
+        let trimmed = renameTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        c.title = trimmed; c.touch()
         try? modelContext.save()
     }
 
@@ -897,119 +867,80 @@ struct CaseListView: View {
         selection.remove(caseItem.id)
     }
 
+    private func deleteCase(_ caseItem: Case) {
+        for photo in caseItem.photos { ImageStorage.shared.deleteImage(photo.imageFileName) }
+        modelContext.delete(caseItem)
+        try? modelContext.save()
+    }
+
+    private func deleteSelectedCases() {
+        let items = scopedCases.filter { selection.contains($0.id) }
+        items.forEach { deleteCase($0) }
+        selection.removeAll(); isSelectionMode = false
+    }
+
+    private func archiveSelectedCases() {
+        var nextOrder = (archivedCases.first?.listOrder ?? Date().timeIntervalSince1970) + 1
+        for c in selectedCaseItems { c.archive(); c.listOrder = nextOrder; nextOrder += 1 }
+        try? modelContext.save()
+        selection.removeAll(); isSelectionMode = false
+    }
+
+    private func restoreSelectedCases() {
+        var nextOrder = (cases.first?.listOrder ?? Date().timeIntervalSince1970) + 1
+        for c in selectedCaseItems { c.restoreFromArchive(); c.listOrder = nextOrder; nextOrder += 1 }
+        try? modelContext.save()
+        selection.removeAll(); isSelectionMode = false
+    }
+
     private func moveCases(from source: IndexSet, to destination: Int) {
         guard canReorderCurrentScope else { return }
-        var reordered: [Case]
-        if isArchivedScope {
-            reordered = archivedCases
-        } else if isAllScope {
-            reordered = cases
-        } else {
-            return
-        }
+        var reordered = isArchivedScope ? archivedCases : cases
         reordered.move(fromOffsets: source, toOffset: destination)
         let count = reordered.count
-        for (index, item) in reordered.enumerated() {
-            item.listOrder = Double(count - index)
-        }
+        for (i, item) in reordered.enumerated() { item.listOrder = Double(count - i) }
         try? modelContext.save()
     }
 
     private func normalizeCaseListOrderIfNeeded() {
-        let allCases = cases + archivedCases
-        guard allCases.contains(where: { $0.listOrder <= 0 }) else { return }
-        let sortedByUpdatedAt = allCases.sorted { $0.updatedAt > $1.updatedAt }
-        let count = sortedByUpdatedAt.count
-        for (index, item) in sortedByUpdatedAt.enumerated() {
-            item.listOrder = Double(count - index)
-        }
+        let all = cases + archivedCases
+        guard all.contains(where: { $0.listOrder <= 0 }) else { return }
+        let sorted = all.sorted { $0.updatedAt > $1.updatedAt }
+        let count = sorted.count
+        for (i, item) in sorted.enumerated() { item.listOrder = Double(count - i) }
         try? modelContext.save()
     }
 
-    private func ensureSelectedScopeIsValid() {
-        guard scopeItems.contains(where: { $0.id == selectedScopeID }) else {
-            selectedScopeID = CaseScopeItem.all.id
-            return
-        }
-    }
-
-    private func selectScope(id: String) {
-        guard id != selectedScopeID else { return }
-        guard scopeItems.contains(where: { $0.id == id }) else {
-            selectedScopeID = id
-            return
-        }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        withAnimation(.spring(response: 0.26, dampingFraction: 0.9, blendDuration: 0.12)) {
-            selectedScopeID = id
-        }
-    }
-
-    private func hasIncludedPDFPhotos(_ caseItem: Case) -> Bool {
-        caseItem.sortedPhotos.contains { $0.isIncludedInPDF }
-    }
-
-    private func startRename(_ caseItem: Case) {
-        caseToRename = caseItem
-        renameTitle = caseItem.title
-        showRenameAlert = true
-    }
-
-    private func renameCase() {
-        guard let caseItem = caseToRename else { return }
-        let trimmed = renameTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        caseItem.title = trimmed
-        caseItem.touch()
+    // Tag CRUD
+    private func createNewTag() {
+        let name = newTagNameInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        let tag = Tag(name: name, colorHex: newTagColorHex)
+        modelContext.insert(tag)
         try? modelContext.save()
     }
 
-    private func startFolderEdit(_ caseItem: Case) {
-        caseToEditFolder = caseItem
-        folderNameInput = caseItem.folderName
-        showFolderEditAlert = true
-    }
-
-    private func saveFolderName() {
-        guard let caseItem = caseToEditFolder else { return }
-        caseItem.folderName = folderNameInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        caseItem.touch()
+    private func createNewTagFrom(name: String) {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty else { return }
+        let tag = Tag(name: n, colorHex: nextTagColor())
+        modelContext.insert(tag)
         try? modelContext.save()
     }
 
-    private func renameSelectedFolder() {
-        let oldName = folderToManageName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let newName = folderRenameInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !oldName.isEmpty, !newName.isEmpty else { return }
-        guard oldName != newName else { return }
-
-        let targetCases = (cases + archivedCases).filter {
-            $0.folderName.trimmingCharacters(in: .whitespacesAndNewlines) == oldName
-        }
-        for item in targetCases {
-            item.folderName = newName
-            item.touch()
-        }
+    private func saveTagRename() {
+        guard let tag = tagToRename else { return }
+        let name = tagRenameInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        tag.name = name
         try? modelContext.save()
-        selectScope(id: CaseScopeItem.folder(newName).id)
     }
 
-    private func deleteSelectedFolder() {
-        let targetName = folderToManageName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !targetName.isEmpty else { return }
-
-        let targetCases = (cases + archivedCases).filter {
-            $0.folderName.trimmingCharacters(in: .whitespacesAndNewlines) == targetName
-        }
-        for item in targetCases {
-            item.folderName = ""
-            item.touch()
-        }
+    private func deleteTag(_ tag: Tag) {
+        // タグを削除すると SwiftData がリレーションを自動解除
+        if selectedTag?.id == tag.id { selectedScopeID = CaseScopeItem.all.id }
+        modelContext.delete(tag)
         try? modelContext.save()
-
-        if selectedFolderName == targetName {
-            selectScope(id: CaseScopeItem.all.id)
-        }
     }
 
     private func generatePDFPreview(for caseItem: Case) {
@@ -1023,138 +954,307 @@ struct CaseListView: View {
                 try? FileManager.default.createDirectory(at: uniqueDir, withIntermediateDirectories: true)
                 let tempURL = uniqueDir.appendingPathComponent(safeFileName)
                 try? data.write(to: tempURL)
-
-                await MainActor.run {
-                    pdfPreviewURL = tempURL
-                    showPDFPreview = true
-                    previewGeneratingCaseID = nil
-                }
+                await MainActor.run { pdfPreviewURL = tempURL; showPDFPreview = true; previewGeneratingCaseID = nil }
             } else {
-                await MainActor.run {
-                    previewGeneratingCaseID = nil
-                }
+                await MainActor.run { previewGeneratingCaseID = nil }
             }
         }
     }
-
-    private func deleteCase(_ caseItem: Case) {
-        for photo in caseItem.photos {
-            ImageStorage.shared.deleteImage(photo.imageFileName)
-        }
-
-        modelContext.delete(caseItem)
-        try? modelContext.save()
-    }
-
-    private func deleteSelectedCases() {
-        let itemsToDelete = scopedCases.filter { selection.contains($0.id) }
-        for caseItem in itemsToDelete {
-            deleteCase(caseItem)
-        }
-        selection.removeAll()
-        isSelectionMode = false
-    }
-
-    private func moveSelectedCasesToFolder() {
-        let destinationFolder = bulkFolderNameInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        let itemsToMove = scopedCases.filter { selection.contains($0.id) }
-        guard !itemsToMove.isEmpty else { return }
-
-        for caseItem in itemsToMove {
-            caseItem.folderName = destinationFolder
-            caseItem.touch()
-        }
-
-        try? modelContext.save()
-        selection.removeAll()
-        isSelectionMode = false
-    }
-
-    private func archiveSelectedCases() {
-        let items = selectedCaseItems
-        guard !items.isEmpty else { return }
-        var nextOrder = (archivedCases.first?.listOrder ?? Date().timeIntervalSince1970) + 1
-        for caseItem in items {
-            caseItem.archive()
-            caseItem.listOrder = nextOrder
-            nextOrder += 1
-        }
-        try? modelContext.save()
-        selection.removeAll()
-        isSelectionMode = false
-    }
-
-    private func restoreSelectedCases() {
-        let items = selectedCaseItems
-        guard !items.isEmpty else { return }
-        var nextOrder = (cases.first?.listOrder ?? Date().timeIntervalSince1970) + 1
-        for caseItem in items {
-            caseItem.restoreFromArchive()
-            caseItem.listOrder = nextOrder
-            nextOrder += 1
-        }
-        try? modelContext.save()
-        selection.removeAll()
-        isSelectionMode = false
-    }
 }
+
+// MARK: - CaseRowView
 
 struct CaseRowView: View {
     let caseItem: Case
-
     private let accentGreen = Color(red: 0.2, green: 0.78, blue: 0.35)
-
-    private var trimmedFolderName: String {
-        caseItem.folderName.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
 
     var body: some View {
         HStack(spacing: 12) {
             ZStack {
-                Circle()
-                    .fill(accentGreen)
-                    .frame(width: 40, height: 40)
-
+                Circle().fill(accentGreen).frame(width: 40, height: 40)
                 Text("\(caseItem.photos.count)")
-                    .font(.headline)
-                    .foregroundColor(.white)
+                    .font(.headline).foregroundColor(.white)
             }
-
             VStack(alignment: .leading, spacing: 4) {
-                Text(caseItem.title)
-                    .font(.headline)
-                    .lineLimit(1)
-
+                Text(caseItem.title).font(.headline).lineLimit(1)
                 HStack(spacing: 6) {
                     Text(formattedDate(caseItem.updatedAt))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    if !trimmedFolderName.isEmpty {
-                        Text(trimmedFolderName)
+                        .font(.caption).foregroundColor(.secondary)
+                    // タグバッジ（最大3個）
+                    let sortedTags = caseItem.tags.prefix(maxTagsPerCase)
+                    ForEach(sortedTags) { tag in
+                        Text(tag.name)
                             .font(.caption2)
-                            .foregroundColor(.orange)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.orange.opacity(0.12))
+                            .foregroundColor(tag.color)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(tag.color.opacity(0.15))
                             .clipShape(Capsule())
+                            .lineLimit(1)
                     }
                 }
             }
-
             Spacer()
         }
         .padding(.vertical, 4)
     }
 
     private func formattedDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy/MM/dd HH:mm"
-        return formatter.string(from: date)
+        let f = DateFormatter(); f.dateFormat = "yyyy/MM/dd HH:mm"
+        return f.string(from: date)
+    }
+}
+
+// MARK: - TagPickerSheet（単一案件のタグ付けシート）
+
+struct TagPickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var caseItem: Case
+    let allTags: [Tag]
+    let onCreateTag: (String) -> Void
+
+    @State private var newTagName = ""
+    @State private var showNewTagInput = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("タグを選択（最大\(maxTagsPerCase)個）") {
+                    ForEach(allTags) { tag in
+                        let isAttached = caseItem.tags.contains(where: { $0.id == tag.id })
+                        Button {
+                            toggleTag(tag)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Circle().fill(tag.color).frame(width: 12, height: 12)
+                                Text(tag.name).foregroundColor(.primary)
+                                Spacer()
+                                if isAttached {
+                                    Image(systemName: "checkmark").foregroundColor(.accentColor).fontWeight(.bold)
+                                }
+                            }
+                        }
+                        .disabled(!isAttached && caseItem.tags.count >= maxTagsPerCase)
+                    }
+                }
+
+                Section {
+                    if showNewTagInput {
+                        HStack {
+                            TextField("新規タグ名", text: $newTagName)
+                            Button("作成") {
+                                onCreateTag(newTagName)
+                                newTagName = ""
+                                showNewTagInput = false
+                            }
+                            .disabled(newTagName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    } else {
+                        Button {
+                            showNewTagInput = true
+                        } label: {
+                            Label("新規タグを作成", systemImage: "plus.circle")
+                        }
+                    }
+                }
+            }
+            .navigationTitle("タグを設定")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完了") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func toggleTag(_ tag: Tag) {
+        if let idx = caseItem.tags.firstIndex(where: { $0.id == tag.id }) {
+            caseItem.tags.remove(at: idx)
+        } else {
+            guard caseItem.tags.count < maxTagsPerCase else { return }
+            caseItem.tags.append(tag)
+        }
+    }
+}
+
+// MARK: - BulkTagSheet（複数案件への一括タグ付け）
+
+struct BulkTagSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let cases: [Case]
+    let allTags: [Tag]
+    let onCreateTag: (String) -> Void
+    let onDone: () -> Void
+
+    @State private var newTagName = ""
+    @State private var showNewTagInput = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("\(cases.count)件の案件にタグを適用") {
+                    ForEach(allTags) { tag in
+                        let allHave = cases.allSatisfy { c in c.tags.contains(where: { $0.id == tag.id }) }
+                        let someHave = cases.contains { c in c.tags.contains(where: { $0.id == tag.id }) }
+                        Button { bulkToggle(tag, allHave: allHave) } label: {
+                            HStack(spacing: 12) {
+                                Circle().fill(tag.color).frame(width: 12, height: 12)
+                                Text(tag.name).foregroundColor(.primary)
+                                Spacer()
+                                if allHave {
+                                    Image(systemName: "checkmark").foregroundColor(.accentColor).fontWeight(.bold)
+                                } else if someHave {
+                                    Image(systemName: "minus").foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+                Section {
+                    if showNewTagInput {
+                        HStack {
+                            TextField("新規タグ名", text: $newTagName)
+                            Button("作成") { onCreateTag(newTagName); newTagName = ""; showNewTagInput = false }
+                            .disabled(newTagName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    } else {
+                        Button { showNewTagInput = true } label: { Label("新規タグを作成", systemImage: "plus.circle") }
+                    }
+                }
+            }
+            .navigationTitle("タグを一括設定")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { Button("完了") { onDone() } }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func bulkToggle(_ tag: Tag, allHave: Bool) {
+        if allHave {
+            // 全員持っている → 全員から外す
+            for c in cases {
+                c.tags.removeAll(where: { $0.id == tag.id })
+            }
+        } else {
+            // 持っていない案件に付与（上限範囲内のみ）
+            for c in cases where !c.tags.contains(where: { $0.id == tag.id }) {
+                if c.tags.count < maxTagsPerCase { c.tags.append(tag) }
+            }
+        }
+    }
+}
+
+// MARK: - TagManagerSheet（タグ一覧管理）
+
+struct TagManagerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let allTags: [Tag]
+    let onRename: (Tag) -> Void
+    let onDelete: (Tag) -> Void
+    let onCreate: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if allTags.isEmpty {
+                    Text("タグがありません")
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding()
+                } else {
+                    ForEach(allTags) { tag in
+                        HStack(spacing: 12) {
+                            Circle().fill(tag.color).frame(width: 14, height: 14)
+                            Text(tag.name)
+                            Spacer()
+                            Menu {
+                                Button { onRename(tag); dismiss() } label: { Label("名前を変更", systemImage: "pencil") }
+                                Button(role: .destructive) { onDelete(tag); dismiss() } label: { Label("削除", systemImage: "trash") }
+                            } label: {
+                                Image(systemName: "ellipsis.circle").foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+            .navigationTitle("タグを管理")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("閉じる") { dismiss() } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { onCreate(); dismiss() } label: { Image(systemName: "plus") }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
+// MARK: - DefaultScopeSheet（デフォルト表示設定）
+
+struct DefaultScopeSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    fileprivate let scopeItems: [CaseScopeItem]
+    let currentDefault: String
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(scopeItems) { item in
+                    let raw = rawValue(for: item)
+                    let isSelected = (raw == currentDefault)
+                    Button {
+                        onSelect(raw)
+                    } label: {
+                        HStack(spacing: 12) {
+                            if case .tag(let t) = item.kind {
+                                Circle().fill(t.color).frame(width: 12, height: 12)
+                            } else {
+                                Image(systemName: scopeIcon(for: item.kind))
+                                    .frame(width: 16)
+                                    .foregroundColor(.secondary)
+                            }
+                            Text(item.title).foregroundColor(.primary)
+                            Spacer()
+                            if isSelected { Image(systemName: "checkmark").foregroundColor(.accentColor).fontWeight(.bold) }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("起動時の表示")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { Button("閉じる") { dismiss() } }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func rawValue(for item: CaseScopeItem) -> String {
+        switch item.kind {
+        case .all:      return AppSettings.defaultScopeAll
+        case .untagged: return AppSettings.defaultScopeUntagged
+        case .archived: return AppSettings.defaultScopeArchived
+        case .tag(let t): return AppSettings.tagScope(t.id)
+        }
+    }
+
+    private func scopeIcon(for kind: CaseScopeKind) -> String {
+        switch kind {
+        case .all:      return "tray.full"
+        case .untagged: return "tag.slash"
+        case .archived: return "archivebox"
+        case .tag:      return "tag"
+        }
     }
 }
 
 #Preview {
     CaseListView()
-        .modelContainer(for: Case.self, inMemory: true)
+        .modelContainer(for: [Case.self, Tag.self, AppSettings.self], inMemory: true)
 }
